@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.4.1"
+VERSION="0.5.0"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -351,13 +351,144 @@ backup_plan(){
  info "Real backup remains blocked until database dump hooks and collector staging are implemented."
 }
 
+collect_and_backup(){
+ need_root; load_config
+ command -v restic >/dev/null || die "restic missing"
+ restic_env || die "Configure a Restic repository first."
+ restic snapshots >/dev/null 2>&1 || die "Restic repository is not accessible."
+
+ local stage host stamp
+ host=$(hostname)
+ stamp=$(date -u +%Y%m%dT%H%M%SZ)
+ stage=$(mktemp -d /tmp/bitx-bk.XXXXXX)
+ chmod 700 "$stage"
+ trap 'rm -rf "$stage"' RETURN
+
+ mkdir -p "$stage/system" "$stage/docker/inspect" "$stage/docker/databases" "$stage/vpn"
+ info "Staging: $stage"
+
+ if [[ "${BACKUP_SYSTEM_INFO:-yes}" == yes ]]; then
+  uname -a > "$stage/system/uname.txt"
+  { command -v dpkg >/dev/null && dpkg-query -W -f='\${binary:Package}\t\${Version}\n'; } > "$stage/system/packages.txt" 2>/dev/null || true
+  ip -details addr show > "$stage/system/ip-addresses.txt" 2>/dev/null || true
+  ip route show table all > "$stage/system/routes.txt" 2>/dev/null || true
+  ok "System inventory collected"
+ fi
+
+ if [[ "${BACKUP_CRON:-yes}" == yes ]]; then
+  mkdir -p "$stage/system/cron"
+  for p in /etc/crontab /etc/cron.d /etc/cron.hourly /etc/cron.daily /etc/cron.weekly /etc/cron.monthly; do
+   [[ -e "$p" ]] && cp -a "$p" "$stage/system/cron/" 2>/dev/null || true
+  done
+  crontab -l > "$stage/system/cron/root.crontab" 2>/dev/null || true
+  ok "Cron collected"
+ fi
+
+ if [[ "${BACKUP_SYSTEMD:-yes}" == yes ]] && command -v systemctl >/dev/null; then
+  mkdir -p "$stage/system/systemd"
+  systemctl list-unit-files --no-pager > "$stage/system/systemd/unit-files.txt" 2>/dev/null || true
+  systemctl list-timers --all --no-pager > "$stage/system/systemd/timers.txt" 2>/dev/null || true
+  for p in /etc/systemd/system /usr/local/lib/systemd/system; do [[ -d "$p" ]] && cp -a "$p" "$stage/system/systemd/" 2>/dev/null || true; done
+  ok "Systemd metadata collected"
+ fi
+
+ if [[ "${BACKUP_VPN:-yes}" == yes && -d /etc/wireguard ]]; then
+  cp -a /etc/wireguard "$stage/vpn/"
+  ok "WireGuard collected"
+ fi
+
+ local -a sources=()
+ if [[ "${BACKUP_DOCKER:-yes}" == yes ]] && command -v docker >/dev/null && docker info >/dev/null 2>&1; then
+  docker version > "$stage/docker/version.txt" 2>/dev/null || true
+  docker network ls > "$stage/docker/networks.txt" 2>/dev/null || true
+  docker image ls --digests > "$stage/docker/images.txt" 2>/dev/null || true
+
+  while IFS= read -r id; do
+   [[ -n "$id" ]] || continue
+   local name image wd
+   name=$(docker inspect -f '{{.Name}}' "$id" | sed 's#^/##')
+   image=$(docker inspect -f '{{.Config.Image}}' "$id")
+   wd=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$id" 2>/dev/null || true)
+   docker inspect "$id" > "$stage/docker/inspect/$name.json"
+   if [[ -n "$wd" && "$wd" != "<no value>" && -e "$wd" ]]; then sources+=("$wd"); fi
+
+   case "${image,,}" in
+    *mariadb*|*mysql*)
+     info "Creating logical database dump: $name"
+     if docker exec "$name" sh -c 'command -v mariadb-dump >/dev/null || command -v mysqldump >/dev/null'; then
+      if docker exec "$name" sh -c '
+       DUMP=$(command -v mariadb-dump || command -v mysqldump)
+       if [ -n "$MYSQL_ROOT_PASSWORD" ]; then
+        exec "$DUMP" -uroot -p"$MYSQL_ROOT_PASSWORD" --all-databases --single-transaction --routines --events
+       elif [ -n "$MARIADB_ROOT_PASSWORD" ]; then
+        exec "$DUMP" -uroot -p"$MARIADB_ROOT_PASSWORD" --all-databases --single-transaction --routines --events
+       elif [ -n "$MYSQL_PASSWORD" ] && [ -n "$MYSQL_USER" ]; then
+        exec "$DUMP" -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" --all-databases --single-transaction
+       else
+        exit 44
+       fi
+      ' > "$stage/docker/databases/$name.sql"; then
+       chmod 600 "$stage/docker/databases/$name.sql"; ok "Database dump complete: $name"
+      else
+       rm -f "$stage/docker/databases/$name.sql"
+       error "Database dump failed: $name"
+       error "Backup aborted; no snapshot created."
+       return 1
+      fi
+     else
+      error "No mariadb-dump/mysqldump found in $name; backup aborted."
+      return 1
+     fi
+     ;;
+    *postgres*)
+     info "Creating logical PostgreSQL dump: $name"
+     if docker exec "$name" sh -c 'command -v pg_dumpall >/dev/null'; then
+      if docker exec "$name" sh -c 'exec pg_dumpall -U "${POSTGRES_USER:-postgres}"' > "$stage/docker/databases/$name.sql"; then
+       chmod 600 "$stage/docker/databases/$name.sql"; ok "Database dump complete: $name"
+      else
+       rm -f "$stage/docker/databases/$name.sql"; error "PostgreSQL dump failed: $name"; return 1
+      fi
+     else error "pg_dumpall missing in $name; backup aborted."; return 1; fi
+     ;;
+   esac
+  done < <(docker ps -a -q)
+
+  mapfile -t sources < <(printf '%s\n' "${sources[@]}" | grep '^/' | sort -u)
+  ok "Docker manifests collected"
+ fi
+
+ cat > "$stage/manifest.txt" <<EOF
+bitx-bk-version=$VERSION
+host=$host
+created-utc=$stamp
+repository=$RESTIC_REPOSITORY
+EOF
+ printf 'source=%s\n' "${sources[@]}" >> "$stage/manifest.txt"
+
+ say
+ heading "Ready to create snapshot"
+ ok "Collector staging complete"
+ info "Docker project sources: ${#sources[@]}"
+ info "Repository: $RESTIC_REPOSITORY"
+ read -r -p "Create encrypted snapshot now? [y/N]: " answer
+ [[ "$answer" =~ ^[Yy]$ ]] || { warn "Backup cancelled; no snapshot created."; return 0; }
+
+ local -a args=("$stage")
+ local p
+ for p in "${sources[@]}"; do args+=("$p"); done
+ if restic backup --tag bitx-bk --tag "host:$host" "${args[@]}"; then
+  ok "Backup snapshot created successfully."
+  restic snapshots --tag bitx-bk --latest 1 || true
+ else
+  error "Restic backup failed."
+  return 1
+ fi
+}
+
 backup(){
  need_root; load_config
- if [[ "${1:-}" == "--dry-run" || "${1:-}" == "--plan" ]]; then
-  backup_plan
-  return
- fi
- die "Real backup is intentionally disabled until database dump hooks and collector staging are recovery-safe."
+ if [[ "${1:-}" == "--dry-run" || "${1:-}" == "--plan" ]]; then backup_plan; return; fi
+ collect_and_backup
 }
 
 menu(){
@@ -376,6 +507,7 @@ menu(){
   say "  6) Restic snapshots"
   say "  7) Restic repository check"
   say "  8) Backup plan"
+  say "  9) Run backup"
   say "  0) Exit"
   say
   read -r -p "Select: " choice
@@ -388,6 +520,7 @@ menu(){
    6) repo_cmd snapshots --tag bitx-bk; pause;;
    7) repo_cmd check; pause;;
    8) backup --plan; pause;;
+   9) backup; pause;;
    0) return;;
    *) warn "Invalid selection"; sleep 1;;
   esac
@@ -399,7 +532,7 @@ usage(){
 bitx-bk v$VERSION
 Usage: bitx-bk [command]
 No command opens the interactive menu.
-Commands: doctor, discover, docker-audit, virtualmin-audit, repo-config-local, repo-status, backup --plan, snapshots, check
+Commands: doctor, discover, docker-audit, virtualmin-audit, repo-config-local, repo-status, backup --plan, backup, snapshots, check
 Colors: COLOR=auto|always|never (default auto); NO_COLOR disables colors in auto mode.
 EOF
 }
