@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.5.0"
+VERSION="0.5.1"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -418,12 +418,14 @@ collect_and_backup(){
      if docker exec "$name" sh -c 'command -v mariadb-dump >/dev/null || command -v mysqldump >/dev/null'; then
       if docker exec "$name" sh -c '
        DUMP=$(command -v mariadb-dump || command -v mysqldump)
-       if [ -n "$MYSQL_ROOT_PASSWORD" ]; then
-        exec "$DUMP" -uroot -p"$MYSQL_ROOT_PASSWORD" --all-databases --single-transaction --routines --events
+       if [ -n "$MYSQL_USER" ] && [ -n "$MYSQL_PASSWORD" ] && [ -n "$MYSQL_DATABASE" ]; then
+        exec "$DUMP" -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE" --single-transaction --quick
+       elif [ -n "$MARIADB_USER" ] && [ -n "$MARIADB_PASSWORD" ] && [ -n "$MARIADB_DATABASE" ]; then
+        exec "$DUMP" -u"$MARIADB_USER" -p"$MARIADB_PASSWORD" "$MARIADB_DATABASE" --single-transaction --quick
+       elif [ -n "$MYSQL_ROOT_PASSWORD" ]; then
+        exec "$DUMP" -uroot -p"$MYSQL_ROOT_PASSWORD" --all-databases --single-transaction --quick --routines --events
        elif [ -n "$MARIADB_ROOT_PASSWORD" ]; then
-        exec "$DUMP" -uroot -p"$MARIADB_ROOT_PASSWORD" --all-databases --single-transaction --routines --events
-       elif [ -n "$MYSQL_PASSWORD" ] && [ -n "$MYSQL_USER" ]; then
-        exec "$DUMP" -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" --all-databases --single-transaction
+        exec "$DUMP" -uroot -p"$MARIADB_ROOT_PASSWORD" --all-databases --single-transaction --quick --routines --events
        else
         exit 44
        fi
