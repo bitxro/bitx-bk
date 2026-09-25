@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 umask 077
-VERSION="0.3.0"
+VERSION="0.4.0"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 setup_colors(){
@@ -132,6 +132,62 @@ repository_menu(){
 }
 
 repo_cmd(){ need_root; command -v restic >/dev/null||die "restic missing"; restic_env || die "Configure a Restic repository first."; restic "$@"; }
+
+backup_plan(){
+ need_root; load_config
+ heading "BITX-BK Backup Plan v$VERSION"; say "=========================="
+ command -v restic >/dev/null || { error "restic missing"; return 1; }
+ if restic_env && restic snapshots >/dev/null 2>&1; then ok "Restic repository: $RESTIC_REPOSITORY"; else error "Restic repository is not ready"; return 1; fi
+ say; heading "[SYSTEM]"
+ [[ "${BACKUP_CRON:-yes}" == yes ]] && ok "Cron configuration will be collected"
+ [[ "${BACKUP_SYSTEMD:-yes}" == yes ]] && ok "Systemd configuration and unit metadata will be collected"
+ [[ "${BACKUP_SYSTEM_INFO:-yes}" == yes ]] && ok "System inventory will be collected"
+ say; heading "[VPN]"
+ [[ "${BACKUP_VPN:-yes}" == yes && -d /etc/wireguard ]] && ok "WireGuard configuration detected (secret material will stay inside encrypted snapshot)" || info "No WireGuard configuration selected/detected"
+ say; heading "[DOCKER]"
+ if [[ "${BACKUP_DOCKER:-yes}" == yes ]] && command -v docker >/dev/null && docker info >/dev/null 2>&1; then
+  local containers projects binds dbs=0
+  containers=$(docker ps -a -q|wc -l); info "containers: $containers"
+  mapfile -t projects < <(docker ps -a -q | xargs -r docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' 2>/dev/null | grep -vE '^$|^<no value>backup(){ need_root; load_config; [[ "${1:-}" == "--dry-run" || "${1:-}" == "--plan" ]] && { backup_plan; return; }; die "Real backup is intentionally disabled until database dump hooks and collector staging are recovery-safe."; }
+menu(){
+ need_root
+ while true; do clear 2>/dev/null||true; heading "======================================================"; heading " bitx-bk v$VERSION - Backup & Disaster Recovery"; info "Host: $(hostname)"; heading "======================================================"
+ say "  1) System discovery"; say "  2) Docker recovery audit"; say "  3) Virtualmin / Webmin audit"; say "  4) System check / Doctor"; say "  5) Backup repository"; say "  6) Restic snapshots"; say "  7) Restic repository check"; say "  8) Backup plan"; say "  0) Exit"; say
+ read -r -p "Select: " choice
+ case "$choice" in 1) discover;pause;;2) docker_audit;pause;;3) virtualmin_audit;pause;;4) doctor;pause;;5) repository_menu;;6) repo_cmd snapshots --tag bitx-bk;pause;;7) repo_cmd check;pause;;8) backup --plan;pause;;0)return;;*)warn "Invalid selection";sleep 1;;esac
+ done
+}
+usage(){ cat <<EOF
+bitx-bk v$VERSION
+Usage: bitx-bk [command]
+No command opens the interactive menu.
+Commands: doctor, discover, docker-audit, virtualmin-audit, repo-config-local, repo-status, backup --plan, snapshots, check
+Colors: COLOR=auto|always|never (default auto); NO_COLOR disables colors in auto mode.
+EOF
+}
+cmd="${1:-}"; [[ $# -gt 0 ]]&&shift||true
+case "$cmd" in "")menu;;doctor)doctor;;discover)discover;;docker-audit)docker_audit;;virtualmin-audit)virtualmin_audit;;repo-config-local)configure_local_repo;;repo-status)repository_status;;backup)backup "${1:-}";;snapshots)repo_cmd snapshots --tag bitx-bk;;check)repo_cmd check;;version|--version|-V)echo "$VERSION";;help|--help|-h)usage;;*)usage;exit 2;;esac
+ | sort -u)
+  mapfile -t binds < <(docker ps -a -q | xargs -r docker inspect -f '{{range .Mounts}}{{if eq .Type "bind"}}{{println .Source}}{{end}}{{end}}' 2>/dev/null | grep '^/' | sort -u)
+  info "Compose project directories: ${#projects[@]}"
+  for p in "${projects[@]}"; do [[ -e "$p" ]] && ok "$p" || error "missing: $p"; done
+  info "unique bind sources: ${#binds[@]}"
+  while IFS= read -r line; do
+   [[ -n "$line" ]] || continue
+   local n i
+   n=${line%%|*}; i=${line#*|}
+   case "${i,,}" in *mariadb*|*mysql*|*postgres*) warn "database workload: $n ($i) - logical dump required before real backup"; ((dbs+=1));; esac
+  done < <(docker ps -a --format '{{.Names}}|{{.Image}}')
+  if ((dbs==0)); then ok "No MariaDB/MySQL/PostgreSQL container detected"; else info "database workloads requiring hooks: $dbs"; fi
+ else info "Docker not selected/detected"; fi
+ say; heading "[BACKUP SOURCES]"
+ info "System metadata will be staged in a root-only temporary directory."
+ for p in "${projects[@]:-}"; do [[ -n "$p" ]] && say "  $p"; done
+ for p in "${binds[@]:-}"; do [[ -n "$p" ]] && say "  $p"; done
+ say
+ warn "PLAN ONLY: no snapshot has been created."
+ info "Real backup remains blocked until database dump hooks and collector staging are implemented."
+}
 backup(){ need_root; load_config; [[ "${1:-}" == "--dry-run" ]] && { discover; say; info "DRY RUN: no snapshot created."; return; }; die "Real backup is intentionally disabled until Docker/Virtualmin collection is recovery-safe."; }
 menu(){
  need_root
