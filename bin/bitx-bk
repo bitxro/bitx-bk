@@ -1,16 +1,26 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 umask 077
-VERSION="0.4.0"
+
+VERSION="0.4.1"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
+
 setup_colors(){
  RED=""; GREEN=""; YELLOW=""; CYAN=""; BOLD=""; RESET=""
  local use=no
- case "${COLOR_MODE:-auto}" in always) use=yes;; never) use=no;; auto) [[ -t 1 && -z "${NO_COLOR:-}" ]] && use=yes;; *) use=no;; esac
- if [[ "$use" == yes ]]; then RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; BOLD=$'\033[1m'; RESET=$'\033[0m'; fi
+ case "${COLOR_MODE:-auto}" in
+  always) use=yes;;
+  never) use=no;;
+  auto) [[ -t 1 && -z "${NO_COLOR:-}" ]] && use=yes;;
+  *) use=no;;
+ esac
+ if [[ "$use" == yes ]]; then
+  RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
+ fi
 }
 setup_colors
+
 say(){ printf '%s\n' "$*"; }
 info(){ printf '  %b[INFO]%b %s\n' "$CYAN" "$RESET" "$*"; }
 ok(){ printf '  %b[OK]%b %s\n' "$GREEN" "$RESET" "$*"; }
@@ -19,11 +29,18 @@ error(){ printf '  %b[ERROR]%b %s\n' "$RED" "$RESET" "$*" >&2; }
 die(){ error "$*"; exit 1; }
 heading(){ printf '%b%s%b\n' "$BOLD$CYAN" "$*" "$RESET"; }
 pause(){ read -r -p "Press Enter to continue..." _ || true; }
-load_config(){ [[ -r "$CONFIG" ]] || die "Cannot read $CONFIG"; source "$CONFIG"; COLOR_MODE="${COLOR:-$COLOR_MODE}"; setup_colors; }
+
+load_config(){
+ [[ -r "$CONFIG" ]] || die "Cannot read $CONFIG"
+ source "$CONFIG"
+ COLOR_MODE="${COLOR:-$COLOR_MODE}"
+ setup_colors
+}
 need_root(){ [[ $EUID -eq 0 ]] || die "Run as root."; }
 
 doctor(){
- need_root; load_config; heading "BITX-BK System Check v$VERSION"; say "============================"
+ need_root; load_config
+ heading "BITX-BK System Check v$VERSION"; say "============================"
  for c in bash tar sha256sum find awk sed grep; do command -v "$c" >/dev/null && ok "$c" || warn "$c missing"; done
  command -v restic >/dev/null && ok "$(restic version)" || warn "restic missing"
  command -v systemctl >/dev/null && ok "systemd detected" || warn "systemd not detected"
@@ -34,55 +51,125 @@ doctor(){
 }
 
 docker_audit(){
- need_root; heading "Docker Recovery Audit"; say "====================="
+ need_root
+ heading "Docker Recovery Audit"; say "====================="
  command -v docker >/dev/null || { warn "Docker not installed"; return; }
  docker info >/dev/null 2>&1 || { error "Docker daemon unavailable"; return 1; }
+
  local total complete=0 binds=0 named=0 compose=0
  total=$(docker ps -a -q | wc -l)
+
  while IFS= read -r c; do
   [[ -n "$c" ]] || continue
   local name image project wd missing=0
-  name=$(docker inspect -f '{{.Name}}' "$c"|sed 's#^/##'); image=$(docker inspect -f '{{.Config.Image}}' "$c")
-  project=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$c" 2>/dev/null||true)
-  wd=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$c" 2>/dev/null||true)
+  name=$(docker inspect -f '{{.Name}}' "$c" | sed 's#^/##')
+  image=$(docker inspect -f '{{.Config.Image}}' "$c")
+  project=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$c" 2>/dev/null || true)
+  wd=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$c" 2>/dev/null || true)
   [[ -n "$project" && "$project" != "<no value>" ]] && ((compose+=1))
-  say; printf '  %b%s%b\n' "$BOLD" "$name" "$RESET"; info "image: $image"
+
+  say
+  printf '  %b%s%b\n' "$BOLD" "$name" "$RESET"
+  info "image: $image"
   [[ -n "$project" && "$project" != "<no value>" ]] && info "compose project: $project"
   [[ -n "$wd" && "$wd" != "<no value>" ]] && info "compose dir: $wd"
+
   while IFS='|' read -r typ src dst vol; do
    [[ -n "$typ" ]] || continue
    if [[ "$typ" == bind ]]; then
     ((binds+=1)); info "bind: $src -> $dst"
     [[ -e "$src" ]] || { error "missing bind source: $src"; missing=1; }
-   elif [[ "$typ" == volume ]]; then ((named+=1)); info "volume: $vol -> $dst"; fi
-  done < <(docker inspect -f '{{range .Mounts}}{{println .Type "|" .Source "|" .Destination "|" .Name}}{{end}}' "$c"|sed 's/ | /|/g')
-  if ((missing==0)); then ok "discovery: COMPLETE"; info "recovery: NOT TESTED"; ((complete+=1)); else error "discovery: INCOMPLETE"; error "recovery: NOT VERIFIED"; fi
+   elif [[ "$typ" == volume ]]; then
+    ((named+=1)); info "volume: $vol -> $dst"
+   fi
+  done < <(docker inspect -f '{{range .Mounts}}{{println .Type "|" .Source "|" .Destination "|" .Name}}{{end}}' "$c" | sed 's/ | /|/g')
+
+  if ((missing==0)); then
+   ok "discovery: COMPLETE"
+   info "recovery: NOT TESTED"
+   ((complete+=1))
+  else
+   error "discovery: INCOMPLETE"
+   error "recovery: NOT VERIFIED"
+  fi
  done < <(docker ps -a -q)
- say; heading "Summary"; info "containers: $total"; info "compose-attached containers: $compose"; info "bind mounts: $binds"; info "named volume mounts: $named"; ok "discovery complete: $complete/$total"
+
+ say
+ heading "Summary"
+ info "containers: $total"
+ info "compose-attached containers: $compose"
+ info "bind mounts: $binds"
+ info "named volume mounts: $named"
+ ok "discovery complete: $complete/$total"
  warn "Database consistency requires application/database-aware backup hooks."
 }
 
 virtualmin_audit(){
- need_root; heading "Virtualmin / Webmin Audit"; say "======================="
+ need_root
+ heading "Virtualmin / Webmin Audit"; say "======================="
  if command -v virtualmin >/dev/null || [[ -d /etc/webmin/virtual-server ]]; then
   ok "Virtualmin detected"
-  if command -v virtualmin >/dev/null; then local n; n=$(virtualmin list-domains --name-only 2>/dev/null|sed '/^$/d'|wc -l||true); info "virtual servers: $n"; fi
+  if command -v virtualmin >/dev/null; then
+   local n
+   n=$(virtualmin list-domains --name-only 2>/dev/null | sed '/^$/d' | wc -l || true)
+   info "virtual servers: $n"
+  fi
   [[ -d /etc/webmin ]] && ok "Webmin configuration: /etc/webmin"
-  [[ -d /etc/postfix ]] && ok "Postfix"; [[ -d /etc/dovecot ]] && ok "Dovecot"; [[ -d /etc/bind ]] && ok "BIND"
-  [[ -d /etc/apache2 ]] && ok "Apache"; [[ -d /etc/nginx ]] && ok "Nginx"
-  command -v mysql >/dev/null && ok "MySQL/MariaDB client"; command -v pg_dump >/dev/null && ok "PostgreSQL tools"
+  [[ -d /etc/postfix ]] && ok "Postfix"
+  [[ -d /etc/dovecot ]] && ok "Dovecot"
+  [[ -d /etc/bind ]] && ok "BIND"
+  [[ -d /etc/apache2 ]] && ok "Apache"
+  [[ -d /etc/nginx ]] && ok "Nginx"
+  command -v mysql >/dev/null && ok "MySQL/MariaDB client"
+  command -v pg_dump >/dev/null && ok "PostgreSQL tools"
   warn "Native Virtualmin backup integration is not implemented yet; recovery is NOT VERIFIED."
- else info "Virtualmin not detected"; fi
+ else
+  info "Virtualmin not detected"
+ fi
 }
 
 discover(){
- need_root; load_config; heading "BITX-BK Discovery v$VERSION"; say "========================"
- heading "[CRON]"; for p in /etc/crontab /etc/cron.d /etc/cron.hourly /etc/cron.daily /etc/cron.weekly /etc/cron.monthly; do [[ -e "$p" ]] && ok "$p"; done
- heading "[SYSTEMD]"; if command -v systemctl >/dev/null; then info "enabled services: $(systemctl list-unit-files --type=service --state=enabled --no-legend 2>/dev/null|wc -l)"; info "timers: $(systemctl list-timers --all --no-legend 2>/dev/null|wc -l)"; else info "not detected"; fi
- heading "[DOCKER]"; if command -v docker >/dev/null && docker info >/dev/null 2>&1; then ok "Docker detected"; info "containers: $(docker ps -a -q|wc -l)"; info "images: $(docker image ls -q|sort -u|wc -l)"; info "volumes: $(docker volume ls -q|wc -l)"; info "networks: $(docker network ls -q|wc -l)"; docker ps -a --format '    {{.Names}} -> {{.Image}}'; else info "not detected"; fi
- heading "[VPN]"; [[ -d /etc/wireguard ]] && ok "WireGuard" || info "WireGuard not detected"; [[ -d /etc/openvpn ]] && ok "OpenVPN" || info "OpenVPN not detected"
- heading "[WEB HOSTING]"; if command -v virtualmin >/dev/null || [[ -d /etc/webmin/virtual-server ]]; then ok "Virtualmin/Webmin"; else info "Virtualmin not detected"; fi
- heading "[RUSTDESK]"; if systemctl list-unit-files 2>/dev/null|grep -Eq 'hbbs|hbbr' || { command -v docker >/dev/null && docker ps -a --format '{{.Image}} {{.Names}}' 2>/dev/null|grep -qiE 'rustdesk|hbbs|hbbr'; }; then ok "RustDesk Server"; else info "not detected"; fi
+ need_root; load_config
+ heading "BITX-BK Discovery v$VERSION"; say "========================"
+
+ heading "[CRON]"
+ for p in /etc/crontab /etc/cron.d /etc/cron.hourly /etc/cron.daily /etc/cron.weekly /etc/cron.monthly; do
+  [[ -e "$p" ]] && ok "$p"
+ done
+
+ heading "[SYSTEMD]"
+ if command -v systemctl >/dev/null; then
+  info "enabled services: $(systemctl list-unit-files --type=service --state=enabled --no-legend 2>/dev/null | wc -l)"
+  info "timers: $(systemctl list-timers --all --no-legend 2>/dev/null | wc -l)"
+ else
+  info "not detected"
+ fi
+
+ heading "[DOCKER]"
+ if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
+  ok "Docker detected"
+  info "containers: $(docker ps -a -q | wc -l)"
+  info "images: $(docker image ls -q | sort -u | wc -l)"
+  info "volumes: $(docker volume ls -q | wc -l)"
+  info "networks: $(docker network ls -q | wc -l)"
+  docker ps -a --format '    {{.Names}} -> {{.Image}}'
+ else
+  info "not detected"
+ fi
+
+ heading "[VPN]"
+ [[ -d /etc/wireguard ]] && ok "WireGuard" || info "WireGuard not detected"
+ [[ -d /etc/openvpn ]] && ok "OpenVPN" || info "OpenVPN not detected"
+
+ heading "[WEB HOSTING]"
+ if command -v virtualmin >/dev/null || [[ -d /etc/webmin/virtual-server ]]; then ok "Virtualmin/Webmin"; else info "Virtualmin not detected"; fi
+
+ heading "[RUSTDESK]"
+ if systemctl list-unit-files 2>/dev/null | grep -Eq 'hbbs|hbbr' || { command -v docker >/dev/null && docker ps -a --format '{{.Image}} {{.Names}}' 2>/dev/null | grep -qiE 'rustdesk|hbbs|hbbr'; }; then
+  ok "RustDesk Server"
+ else
+  info "not detected"
+ fi
 }
 
 restic_env(){
@@ -91,73 +178,224 @@ restic_env(){
  export RESTIC_REPOSITORY
  if [[ -n "${RESTIC_PASSWORD_FILE:-}" ]]; then export RESTIC_PASSWORD_FILE; fi
 }
+
 save_setting(){
  local key="$1" value="$2" tmp
- mkdir -p "$(dirname "$CONFIG")"; touch "$CONFIG"; chmod 600 "$CONFIG"
- tmp=$(mktemp); awk -v k="$key" '$0 !~ "^" k "=" {print}' "$CONFIG" > "$tmp"
- printf '%s=%q\n' "$key" "$value" >> "$tmp"; cat "$tmp" > "$CONFIG"; rm -f "$tmp"; chmod 600 "$CONFIG"
+ mkdir -p "$(dirname "$CONFIG")"
+ touch "$CONFIG"
+ chmod 600 "$CONFIG"
+ tmp=$(mktemp)
+ awk -v k="$key" '$0 !~ "^" k "=" {print}' "$CONFIG" > "$tmp"
+ printf '%s=%q\n' "$key" "$value" >> "$tmp"
+ cat "$tmp" > "$CONFIG"
+ rm -f "$tmp"
+ chmod 600 "$CONFIG"
 }
+
 configure_local_repo(){
- need_root; load_config; command -v restic >/dev/null || die "restic missing"
+ need_root; load_config
+ command -v restic >/dev/null || die "restic missing"
  heading "Configure local Restic repository"
+
  local path password_file
- read -r -p "Repository directory [/backup/bitx-bk]: " path; path="${path:-/backup/bitx-bk}"
+ read -r -p "Repository directory [/backup/bitx-bk]: " path
+ path="${path:-/backup/bitx-bk}"
  [[ "$path" == /* ]] || { error "Use an absolute path."; return 1; }
+
  password_file="/etc/bitx-bk/restic-password"
- mkdir -p "$path" /etc/bitx-bk; chmod 700 "$path" /etc/bitx-bk
+ mkdir -p "$path" /etc/bitx-bk
+ chmod 700 "$path" /etc/bitx-bk
+
  if [[ ! -s "$password_file" ]]; then
-  if command -v openssl >/dev/null; then openssl rand -base64 32 > "$password_file"
-  else tr -dc 'A-Za-z0-9' </dev/urandom | head -c 48 > "$password_file"; printf '\n' >> "$password_file"; fi
-  chmod 600 "$password_file"; ok "Generated repository password file."
- else info "Using existing repository password file."; fi
- save_setting RESTIC_REPOSITORY "$path"; save_setting RESTIC_PASSWORD_FILE "$password_file"
+  if command -v openssl >/dev/null; then
+   openssl rand -base64 32 > "$password_file"
+  else
+   tr -dc 'A-Za-z0-9' </dev/urandom | head -c 48 > "$password_file"
+   printf '\n' >> "$password_file"
+  fi
+  chmod 600 "$password_file"
+  ok "Generated repository password file."
+ else
+  info "Using existing repository password file."
+ fi
+
+ save_setting RESTIC_REPOSITORY "$path"
+ save_setting RESTIC_PASSWORD_FILE "$password_file"
  export RESTIC_REPOSITORY="$path" RESTIC_PASSWORD_FILE="$password_file"
- if [[ -f "$path/config" ]]; then info "Existing Restic repository detected."
- else restic init || { error "Repository initialization failed."; return 1; }; fi
+
+ if [[ -f "$path/config" ]]; then
+  info "Existing Restic repository detected."
+ else
+  restic init || { error "Repository initialization failed."; return 1; }
+ fi
+
  restic snapshots >/dev/null && ok "Repository initialized and verified: $path" || error "Repository verification failed."
 }
+
 repository_status(){
  need_root
  if ! restic_env; then warn "Repository not configured."; return; fi
- heading "Restic Repository"; info "repository: $RESTIC_REPOSITORY"
+ heading "Restic Repository"
+ info "repository: $RESTIC_REPOSITORY"
  [[ -n "${RESTIC_PASSWORD_FILE:-}" ]] && info "password file: $RESTIC_PASSWORD_FILE"
  if restic snapshots; then ok "repository accessible"; else error "repository check failed"; return 1; fi
 }
+
 repository_menu(){
  while true; do
-  say; heading "Backup repository"; say "  1) Configure local directory"; say "  2) Repository status / snapshots"; say "  3) Repository check"; say "  0) Back"; say
+  say
+  heading "Backup repository"
+  say "  1) Configure local directory"
+  say "  2) Repository status / snapshots"
+  say "  3) Repository check"
+  say "  0) Back"
+  say
   read -r -p "Select: " x
-  case "$x" in 1) configure_local_repo;pause;;2) repository_status;pause;;3) repo_cmd check;pause;;0)return;;*)warn "Invalid selection";;esac
+  case "$x" in
+   1) configure_local_repo; pause;;
+   2) repository_status; pause;;
+   3) repo_cmd check; pause;;
+   0) return;;
+   *) warn "Invalid selection";;
+  esac
  done
 }
 
-repo_cmd(){ need_root; command -v restic >/dev/null||die "restic missing"; restic_env || die "Configure a Restic repository first."; restic "$@"; }
+repo_cmd(){
+ need_root
+ command -v restic >/dev/null || die "restic missing"
+ restic_env || die "Configure a Restic repository first."
+ restic "$@"
+}
 
 backup_plan(){
  need_root; load_config
  heading "BITX-BK Backup Plan v$VERSION"; say "=========================="
+
  command -v restic >/dev/null || { error "restic missing"; return 1; }
- if restic_env && restic snapshots >/dev/null 2>&1; then ok "Restic repository: $RESTIC_REPOSITORY"; else error "Restic repository is not ready"; return 1; fi
+ if restic_env && restic snapshots >/dev/null 2>&1; then
+  ok "Restic repository: $RESTIC_REPOSITORY"
+ else
+  error "Restic repository is not ready"
+  return 1
+ fi
+
  say; heading "[SYSTEM]"
  [[ "${BACKUP_CRON:-yes}" == yes ]] && ok "Cron configuration will be collected"
  [[ "${BACKUP_SYSTEMD:-yes}" == yes ]] && ok "Systemd configuration and unit metadata will be collected"
  [[ "${BACKUP_SYSTEM_INFO:-yes}" == yes ]] && ok "System inventory will be collected"
+
  say; heading "[VPN]"
- [[ "${BACKUP_VPN:-yes}" == yes && -d /etc/wireguard ]] && ok "WireGuard configuration detected (secret material will stay inside encrypted snapshot)" || info "No WireGuard configuration selected/detected"
+ if [[ "${BACKUP_VPN:-yes}" == yes && -d /etc/wireguard ]]; then
+  ok "WireGuard configuration detected (secret material will stay inside encrypted snapshot)"
+ else
+  info "No WireGuard configuration selected/detected"
+ fi
+
+ local -a projects=() binds=()
  say; heading "[DOCKER]"
  if [[ "${BACKUP_DOCKER:-yes}" == yes ]] && command -v docker >/dev/null && docker info >/dev/null 2>&1; then
-  local containers projects binds dbs=0
-  containers=$(docker ps -a -q|wc -l); info "containers: $containers"
-  mapfile -t projects < <(docker ps -a -q | xargs -r docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' 2>/dev/null | grep -vE '^$|^<no value>backup(){ need_root; load_config; [[ "${1:-}" == "--dry-run" || "${1:-}" == "--plan" ]] && { backup_plan; return; }; die "Real backup is intentionally disabled until database dump hooks and collector staging are recovery-safe."; }
+  local containers dbs=0
+  containers=$(docker ps -a -q | wc -l)
+  info "containers: $containers"
+
+  mapfile -t projects < <(
+   docker ps -a -q |
+   xargs -r docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' 2>/dev/null |
+   grep -vE '^$|^<no value>$' |
+   sort -u
+  )
+
+  mapfile -t binds < <(
+   docker ps -a -q |
+   xargs -r docker inspect -f '{{range .Mounts}}{{if eq .Type "bind"}}{{println .Source}}{{end}}{{end}}' 2>/dev/null |
+   grep '^/' |
+   sort -u
+  )
+
+  info "Compose project directories: ${#projects[@]}"
+  for p in "${projects[@]}"; do
+   [[ -e "$p" ]] && ok "$p" || error "missing: $p"
+  done
+
+  info "unique bind sources: ${#binds[@]}"
+  while IFS= read -r line; do
+   [[ -n "$line" ]] || continue
+   local n i
+   n=${line%%|*}
+   i=${line#*|}
+   case "${i,,}" in
+    *mariadb*|*mysql*|*postgres*)
+     warn "database workload: $n ($i) - logical dump required before real backup"
+     ((dbs+=1))
+     ;;
+   esac
+  done < <(docker ps -a --format '{{.Names}}|{{.Image}}')
+
+  if ((dbs==0)); then
+   ok "No MariaDB/MySQL/PostgreSQL container detected"
+  else
+   info "database workloads requiring hooks: $dbs"
+  fi
+ else
+  info "Docker not selected/detected"
+ fi
+
+ say; heading "[BACKUP SOURCES]"
+ info "System metadata will be staged in a root-only temporary directory."
+ for p in "${projects[@]}"; do [[ -n "$p" ]] && say "  $p"; done
+ for p in "${binds[@]}"; do [[ -n "$p" ]] && say "  $p"; done
+
+ say
+ warn "PLAN ONLY: no snapshot has been created."
+ info "Real backup remains blocked until database dump hooks and collector staging are implemented."
+}
+
+backup(){
+ need_root; load_config
+ if [[ "${1:-}" == "--dry-run" || "${1:-}" == "--plan" ]]; then
+  backup_plan
+  return
+ fi
+ die "Real backup is intentionally disabled until database dump hooks and collector staging are recovery-safe."
+}
+
 menu(){
  need_root
- while true; do clear 2>/dev/null||true; heading "======================================================"; heading " bitx-bk v$VERSION - Backup & Disaster Recovery"; info "Host: $(hostname)"; heading "======================================================"
- say "  1) System discovery"; say "  2) Docker recovery audit"; say "  3) Virtualmin / Webmin audit"; say "  4) System check / Doctor"; say "  5) Backup repository"; say "  6) Restic snapshots"; say "  7) Restic repository check"; say "  8) Backup plan"; say "  0) Exit"; say
- read -r -p "Select: " choice
- case "$choice" in 1) discover;pause;;2) docker_audit;pause;;3) virtualmin_audit;pause;;4) doctor;pause;;5) repository_menu;;6) repo_cmd snapshots --tag bitx-bk;pause;;7) repo_cmd check;pause;;8) backup --plan;pause;;0)return;;*)warn "Invalid selection";sleep 1;;esac
+ while true; do
+  clear 2>/dev/null || true
+  heading "======================================================"
+  heading " bitx-bk v$VERSION - Backup & Disaster Recovery"
+  info "Host: $(hostname)"
+  heading "======================================================"
+  say "  1) System discovery"
+  say "  2) Docker recovery audit"
+  say "  3) Virtualmin / Webmin audit"
+  say "  4) System check / Doctor"
+  say "  5) Backup repository"
+  say "  6) Restic snapshots"
+  say "  7) Restic repository check"
+  say "  8) Backup plan"
+  say "  0) Exit"
+  say
+  read -r -p "Select: " choice
+  case "$choice" in
+   1) discover; pause;;
+   2) docker_audit; pause;;
+   3) virtualmin_audit; pause;;
+   4) doctor; pause;;
+   5) repository_menu;;
+   6) repo_cmd snapshots --tag bitx-bk; pause;;
+   7) repo_cmd check; pause;;
+   8) backup --plan; pause;;
+   0) return;;
+   *) warn "Invalid selection"; sleep 1;;
+  esac
  done
 }
-usage(){ cat <<EOF
+
+usage(){
+ cat <<EOF
 bitx-bk v$VERSION
 Usage: bitx-bk [command]
 No command opens the interactive menu.
@@ -165,45 +403,21 @@ Commands: doctor, discover, docker-audit, virtualmin-audit, repo-config-local, r
 Colors: COLOR=auto|always|never (default auto); NO_COLOR disables colors in auto mode.
 EOF
 }
-cmd="${1:-}"; [[ $# -gt 0 ]]&&shift||true
-case "$cmd" in "")menu;;doctor)doctor;;discover)discover;;docker-audit)docker_audit;;virtualmin-audit)virtualmin_audit;;repo-config-local)configure_local_repo;;repo-status)repository_status;;backup)backup "${1:-}";;snapshots)repo_cmd snapshots --tag bitx-bk;;check)repo_cmd check;;version|--version|-V)echo "$VERSION";;help|--help|-h)usage;;*)usage;exit 2;;esac
- | sort -u)
-  mapfile -t binds < <(docker ps -a -q | xargs -r docker inspect -f '{{range .Mounts}}{{if eq .Type "bind"}}{{println .Source}}{{end}}{{end}}' 2>/dev/null | grep '^/' | sort -u)
-  info "Compose project directories: ${#projects[@]}"
-  for p in "${projects[@]}"; do [[ -e "$p" ]] && ok "$p" || error "missing: $p"; done
-  info "unique bind sources: ${#binds[@]}"
-  while IFS= read -r line; do
-   [[ -n "$line" ]] || continue
-   local n i
-   n=${line%%|*}; i=${line#*|}
-   case "${i,,}" in *mariadb*|*mysql*|*postgres*) warn "database workload: $n ($i) - logical dump required before real backup"; ((dbs+=1));; esac
-  done < <(docker ps -a --format '{{.Names}}|{{.Image}}')
-  if ((dbs==0)); then ok "No MariaDB/MySQL/PostgreSQL container detected"; else info "database workloads requiring hooks: $dbs"; fi
- else info "Docker not selected/detected"; fi
- say; heading "[BACKUP SOURCES]"
- info "System metadata will be staged in a root-only temporary directory."
- for p in "${projects[@]:-}"; do [[ -n "$p" ]] && say "  $p"; done
- for p in "${binds[@]:-}"; do [[ -n "$p" ]] && say "  $p"; done
- say
- warn "PLAN ONLY: no snapshot has been created."
- info "Real backup remains blocked until database dump hooks and collector staging are implemented."
-}
-backup(){ need_root; load_config; [[ "${1:-}" == "--dry-run" ]] && { discover; say; info "DRY RUN: no snapshot created."; return; }; die "Real backup is intentionally disabled until Docker/Virtualmin collection is recovery-safe."; }
-menu(){
- need_root
- while true; do clear 2>/dev/null||true; heading "======================================================"; heading " bitx-bk v$VERSION - Backup & Disaster Recovery"; info "Host: $(hostname)"; heading "======================================================"
- say "  1) System discovery"; say "  2) Docker recovery audit"; say "  3) Virtualmin / Webmin audit"; say "  4) System check / Doctor"; say "  5) Backup repository"; say "  6) Restic snapshots"; say "  7) Restic repository check"; say "  8) Backup dry-run"; say "  0) Exit"; say
- read -r -p "Select: " choice
- case "$choice" in 1) discover;pause;;2) docker_audit;pause;;3) virtualmin_audit;pause;;4) doctor;pause;;5) repository_menu;;6) repo_cmd snapshots --tag bitx-bk;pause;;7) repo_cmd check;pause;;8) backup --dry-run;pause;;0)return;;*)warn "Invalid selection";sleep 1;;esac
- done
-}
-usage(){ cat <<EOF
-bitx-bk v$VERSION
-Usage: bitx-bk [command]
-No command opens the interactive menu.
-Commands: doctor, discover, docker-audit, virtualmin-audit, repo-config-local, repo-status, backup --dry-run, snapshots, check
-Colors: COLOR=auto|always|never (default auto); NO_COLOR disables colors in auto mode.
-EOF
-}
-cmd="${1:-}"; [[ $# -gt 0 ]]&&shift||true
-case "$cmd" in "")menu;;doctor)doctor;;discover)discover;;docker-audit)docker_audit;;virtualmin-audit)virtualmin_audit;;repo-config-local)configure_local_repo;;repo-status)repository_status;;backup)backup "${1:-}";;snapshots)repo_cmd snapshots --tag bitx-bk;;check)repo_cmd check;;version|--version|-V)echo "$VERSION";;help|--help|-h)usage;;*)usage;exit 2;;esac
+
+cmd="${1:-}"
+[[ $# -gt 0 ]] && shift || true
+case "$cmd" in
+ "") menu;;
+ doctor) doctor;;
+ discover) discover;;
+ docker-audit) docker_audit;;
+ virtualmin-audit) virtualmin_audit;;
+ repo-config-local) configure_local_repo;;
+ repo-status) repository_status;;
+ backup) backup "${1:-}";;
+ snapshots) repo_cmd snapshots --tag bitx-bk;;
+ check) repo_cmd check;;
+ version|--version|-V) echo "$VERSION";;
+ help|--help|-h) usage;;
+ *) usage; exit 2;;
+esac
