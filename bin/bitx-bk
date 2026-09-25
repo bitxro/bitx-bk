@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.5.1"
+VERSION="0.6.0"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -342,13 +342,13 @@ backup_plan(){
  fi
 
  say; heading "[BACKUP SOURCES]"
- info "System metadata will be staged in a root-only temporary directory."
+ info "System metadata will be staged at /var/lib/bitx-bk/staging/current (root-only)."
  for p in "${projects[@]}"; do [[ -n "$p" ]] && say "  $p"; done
  for p in "${binds[@]}"; do [[ -n "$p" ]] && say "  $p"; done
 
  say
  warn "PLAN ONLY: no snapshot has been created."
- info "Real backup remains blocked until database dump hooks and collector staging are implemented."
+ info "Run backup uses logical DB dumps plus a controlled Docker stop/start consistency window."
 }
 
 collect_and_backup(){
@@ -360,9 +360,12 @@ collect_and_backup(){
  local stage host stamp
  host=$(hostname)
  stamp=$(date -u +%Y%m%dT%H%M%SZ)
- stage=$(mktemp -d /tmp/bitx-bk.XXXXXX)
+ stage="/var/lib/bitx-bk/staging/current"
+ mkdir -p /var/lib/bitx-bk/staging
+ chmod 700 /var/lib/bitx-bk /var/lib/bitx-bk/staging 2>/dev/null || true
+ rm -rf "$stage"
+ mkdir -p "$stage"
  chmod 700 "$stage"
- trap 'rm -rf "$stage"' RETURN
 
  mkdir -p "$stage/system" "$stage/docker/inspect" "$stage/docker/databases" "$stage/vpn"
  info "Staging: $stage"
@@ -473,17 +476,53 @@ EOF
  info "Docker project sources: ${#sources[@]}"
  info "Repository: $RESTIC_REPOSITORY"
  read -r -p "Create encrypted snapshot now? [y/N]: " answer
- [[ "$answer" =~ ^[Yy]$ ]] || { warn "Backup cancelled; no snapshot created."; return 0; }
+ [[ "$answer" =~ ^[Yy]$ ]] || { warn "Backup cancelled; no snapshot created."; rm -rf "$stage"; return 0; }
 
- local -a args=("$stage")
- local p
+ local -a args=("$stage") running=()
+ local p backup_rc=0
  for p in "${sources[@]}"; do args+=("$p"); done
- if restic backup --tag bitx-bk --tag "host:$host" "${args[@]}"; then
+
+ if [[ "${BACKUP_DOCKER:-yes}" == yes ]] && command -v docker >/dev/null && docker info >/dev/null 2>&1; then
+  mapfile -t running < <(docker ps -q)
+  if (("${#running[@]}" > 0)); then
+   say
+   heading "Docker consistency window"
+   info "Stopping ${#running[@]} running container(s) for a filesystem-consistent snapshot..."
+   if ! docker stop "${running[@]}"; then
+    error "Could not stop all running containers; backup aborted."
+    docker start "${running[@]}" >/dev/null 2>&1 || true
+    rm -rf "$stage"
+    return 1
+   fi
+   ok "Docker containers stopped"
+  fi
+ fi
+
+ set +e
+ restic backup --tag bitx-bk --tag "host:$host" "${args[@]}"
+ backup_rc=$?
+ set -e
+
+ if (("${#running[@]}" > 0)); then
+  info "Restarting containers that were running before backup..."
+  if docker start "${running[@]}" >/dev/null; then
+   ok "Docker containers restarted"
+  else
+   error "One or more containers could not be restarted automatically."
+   error "Check immediately with: docker ps -a"
+   rm -rf "$stage"
+   return 1
+  fi
+ fi
+
+ rm -rf "$stage"
+
+ if ((backup_rc==0)); then
   ok "Backup snapshot created successfully."
   restic snapshots --tag bitx-bk --latest 1 || true
  else
-  error "Restic backup failed."
-  return 1
+  error "Restic backup failed. Docker services were restarted."
+  return "$backup_rc"
  fi
 }
 
