@@ -1,0 +1,13 @@
+# bitx-bk configuration
+# Configure the restic repository using the standard RESTIC environment variables.
+INCLUDE_PATHS="/opt:/usr/local/bin"
+BACKUP_CRON=yes
+BACKUP_SYSTEMD=yes
+BACKUP_DOCKER=yes
+BACKUP_VPN=yes
+BACKUP_RUSTDESK=yes
+BACKUP_SYSTEM_INFO=yes
+DOCKER_SAVE_IMAGES=no
+KEEP_DAILY=7
+KEEP_WEEKLY=4
+KEEP_MONTHLY=6
