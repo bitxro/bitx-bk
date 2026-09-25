@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 umask 077
-VERSION="0.2.1"
+VERSION="0.3.0"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 setup_colors(){
@@ -56,7 +56,7 @@ docker_audit(){
     [[ -e "$src" ]] || { error "missing bind source: $src"; missing=1; }
    elif [[ "$typ" == volume ]]; then ((named+=1)); info "volume: $vol -> $dst"; fi
   done < <(docker inspect -f '{{range .Mounts}}{{println .Type "|" .Source "|" .Destination "|" .Name}}{{end}}' "$c"|sed 's/ | /|/g')
-  if ((missing==0)); then ok "discovery: COMPLETE"; warn "recovery: NOT YET VERIFIED"; ((complete+=1)); else error "discovery: INCOMPLETE"; error "recovery: NOT VERIFIED"; fi
+  if ((missing==0)); then ok "discovery: COMPLETE"; info "recovery: NOT TESTED"; ((complete+=1)); else error "discovery: INCOMPLETE"; error "recovery: NOT VERIFIED"; fi
  done < <(docker ps -a -q)
  say; heading "Summary"; info "containers: $total"; info "compose-attached containers: $compose"; info "bind mounts: $binds"; info "named volume mounts: $named"; ok "discovery complete: $complete/$total"
  warn "Database consistency requires application/database-aware backup hooks."
@@ -84,23 +84,70 @@ discover(){
  heading "[WEB HOSTING]"; if command -v virtualmin >/dev/null || [[ -d /etc/webmin/virtual-server ]]; then ok "Virtualmin/Webmin"; else info "Virtualmin not detected"; fi
  heading "[RUSTDESK]"; if systemctl list-unit-files 2>/dev/null|grep -Eq 'hbbs|hbbr' || { command -v docker >/dev/null && docker ps -a --format '{{.Image}} {{.Names}}' 2>/dev/null|grep -qiE 'rustdesk|hbbs|hbbr'; }; then ok "RustDesk Server"; else info "not detected"; fi
 }
-repo_cmd(){ need_root; load_config; command -v restic >/dev/null||die "restic missing"; [[ -n "${RESTIC_REPOSITORY:-}" ]]||die "Set RESTIC_REPOSITORY in environment"; restic "$@"; }
+
+restic_env(){
+ load_config
+ [[ -n "${RESTIC_REPOSITORY:-}" ]] || return 1
+ export RESTIC_REPOSITORY
+ if [[ -n "${RESTIC_PASSWORD_FILE:-}" ]]; then export RESTIC_PASSWORD_FILE; fi
+}
+save_setting(){
+ local key="$1" value="$2" tmp
+ mkdir -p "$(dirname "$CONFIG")"; touch "$CONFIG"; chmod 600 "$CONFIG"
+ tmp=$(mktemp); awk -v k="$key" '$0 !~ "^" k "=" {print}' "$CONFIG" > "$tmp"
+ printf '%s=%q\n' "$key" "$value" >> "$tmp"; cat "$tmp" > "$CONFIG"; rm -f "$tmp"; chmod 600 "$CONFIG"
+}
+configure_local_repo(){
+ need_root; load_config; command -v restic >/dev/null || die "restic missing"
+ heading "Configure local Restic repository"
+ local path password_file
+ read -r -p "Repository directory [/backup/bitx-bk]: " path; path="${path:-/backup/bitx-bk}"
+ [[ "$path" == /* ]] || { error "Use an absolute path."; return 1; }
+ password_file="/etc/bitx-bk/restic-password"
+ mkdir -p "$path" /etc/bitx-bk; chmod 700 "$path" /etc/bitx-bk
+ if [[ ! -s "$password_file" ]]; then
+  if command -v openssl >/dev/null; then openssl rand -base64 32 > "$password_file"
+  else tr -dc 'A-Za-z0-9' </dev/urandom | head -c 48 > "$password_file"; printf '\n' >> "$password_file"; fi
+  chmod 600 "$password_file"; ok "Generated repository password file."
+ else info "Using existing repository password file."; fi
+ save_setting RESTIC_REPOSITORY "$path"; save_setting RESTIC_PASSWORD_FILE "$password_file"
+ export RESTIC_REPOSITORY="$path" RESTIC_PASSWORD_FILE="$password_file"
+ if [[ -f "$path/config" ]]; then info "Existing Restic repository detected."
+ else restic init || { error "Repository initialization failed."; return 1; }; fi
+ restic snapshots >/dev/null && ok "Repository initialized and verified: $path" || error "Repository verification failed."
+}
+repository_status(){
+ need_root
+ if ! restic_env; then warn "Repository not configured."; return; fi
+ heading "Restic Repository"; info "repository: $RESTIC_REPOSITORY"
+ [[ -n "${RESTIC_PASSWORD_FILE:-}" ]] && info "password file: $RESTIC_PASSWORD_FILE"
+ if restic snapshots; then ok "repository accessible"; else error "repository check failed"; return 1; fi
+}
+repository_menu(){
+ while true; do
+  say; heading "Backup repository"; say "  1) Configure local directory"; say "  2) Repository status / snapshots"; say "  3) Repository check"; say "  0) Back"; say
+  read -r -p "Select: " x
+  case "$x" in 1) configure_local_repo;pause;;2) repository_status;pause;;3) repo_cmd check;pause;;0)return;;*)warn "Invalid selection";;esac
+ done
+}
+
+repo_cmd(){ need_root; command -v restic >/dev/null||die "restic missing"; restic_env || die "Configure a Restic repository first."; restic "$@"; }
 backup(){ need_root; load_config; [[ "${1:-}" == "--dry-run" ]] && { discover; say; info "DRY RUN: no snapshot created."; return; }; die "Real backup is intentionally disabled until Docker/Virtualmin collection is recovery-safe."; }
 menu(){
  need_root
  while true; do clear 2>/dev/null||true; heading "======================================================"; heading " bitx-bk v$VERSION - Backup & Disaster Recovery"; info "Host: $(hostname)"; heading "======================================================"
- say "  1) System discovery"; say "  2) Docker recovery audit"; say "  3) Virtualmin / Webmin audit"; say "  4) System check / Doctor"; say "  5) Restic snapshots"; say "  6) Restic repository check"; say "  7) Backup dry-run"; say "  0) Exit"; say
+ say "  1) System discovery"; say "  2) Docker recovery audit"; say "  3) Virtualmin / Webmin audit"; say "  4) System check / Doctor"; say "  5) Backup repository"; say "  6) Restic snapshots"; say "  7) Restic repository check"; say "  8) Backup dry-run"; say "  0) Exit"; say
  read -r -p "Select: " choice
- case "$choice" in 1) discover;pause;;2) docker_audit;pause;;3) virtualmin_audit;pause;;4) doctor;pause;;5) repo_cmd snapshots --tag bitx-bk;pause;;6) repo_cmd check;pause;;7) backup --dry-run;pause;;0)return;;*)warn "Invalid selection";sleep 1;;esac
+ case "$choice" in 1) discover;pause;;2) docker_audit;pause;;3) virtualmin_audit;pause;;4) doctor;pause;;5) repository_menu;;6) repo_cmd snapshots --tag bitx-bk;pause;;7) repo_cmd check;pause;;8) backup --dry-run;pause;;0)return;;*)warn "Invalid selection";sleep 1;;esac
  done
 }
 usage(){ cat <<EOF
 bitx-bk v$VERSION
 Usage: bitx-bk [command]
 No command opens the interactive menu.
-Commands: doctor, discover, docker-audit, virtualmin-audit, backup --dry-run, snapshots, check
+Commands: doctor, discover, docker-audit, virtualmin-audit, repo-config-local, repo-status, backup --dry-run, snapshots, check
 Colors: COLOR=auto|always|never (default auto); NO_COLOR disables colors in auto mode.
 EOF
 }
 cmd="${1:-}"; [[ $# -gt 0 ]]&&shift||true
-case "$cmd" in "")menu;;doctor)doctor;;discover)discover;;docker-audit)docker_audit;;virtualmin-audit)virtualmin_audit;;backup)backup "${1:-}";;snapshots)repo_cmd snapshots --tag bitx-bk;;check)repo_cmd check;;version|--version|-V)echo "$VERSION";;help|--help|-h)usage;;*)usage;exit 2;;esac
+case "$cmd" in "")menu;;doctor)doctor;;discover)discover;;docker-audit)docker_audit;;virtualmin-audit)virtualmin_audit;;repo-config-local)configure_local_repo;;repo-status)repository_status;;backup)backup "${1:-}";;snapshots)repo_cmd snapshots --tag bitx-bk;;check)repo_cmd check;;version|--version|-V)echo "$VERSION";;help|--help|-h)usage;;*)usage;exit 2;;esac
