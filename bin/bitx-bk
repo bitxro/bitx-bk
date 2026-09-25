@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+VERSION="0.1.0"
+CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
+
+say(){ printf '%s\n' "$*"; }
+ok(){ printf '  [OK] %s\n' "$*"; }
+warn(){ printf '  [WARN] %s\n' "$*" >&2; }
+die(){ printf '  [ERROR] %s\n' "$*" >&2; exit 1; }
+yesno(){ [[ "${1:-no}" == "yes" ]]; }
+
+load_config(){
+  [[ -r "$CONFIG" ]] || die "Cannot read $CONFIG"
+  source "$CONFIG"
+}
+need_root(){ [[ $EUID -eq 0 ]] || die "Run as root."; }
+
+doctor(){
+  need_root; load_config
+  say "BITX-BK System Check v$VERSION"
+  say "============================"
+  for c in bash tar sha256sum find awk sed grep; do
+    command -v "$c" >/dev/null && ok "$c" || warn "$c missing"
+  done
+  command -v restic >/dev/null && ok "$(restic version)" || warn "restic missing"
+  command -v systemctl >/dev/null && ok "systemd detected" || warn "systemd not detected"
+  command -v docker >/dev/null && ok "Docker detected" || say "  [--] Docker not detected"
+  command -v wg >/dev/null && ok "WireGuard tools detected" || say "  [--] WireGuard tools not detected"
+  [[ -d /etc/openvpn ]] && ok "OpenVPN configuration detected" || say "  [--] OpenVPN not detected"
+}
+
+discover(){
+  need_root; load_config
+  say "BITX-BK Discovery v$VERSION"
+  say "========================"
+  say "[CRON]"
+  for p in /etc/crontab /etc/cron.d /etc/cron.hourly /etc/cron.daily /etc/cron.weekly /etc/cron.monthly; do
+    [[ -e "$p" ]] && say "  + $p"
+  done
+
+  say "[SYSTEMD]"
+  if command -v systemctl >/dev/null; then
+    say "  enabled services: $(systemctl list-unit-files --type=service --state=enabled --no-legend 2>/dev/null | wc -l)"
+    say "  timers: $(systemctl list-timers --all --no-legend 2>/dev/null | wc -l)"
+    find /etc/systemd/system -type f \( -name '*.service' -o -name '*.timer' \) -print 2>/dev/null | sed 's/^/  + /'
+  else
+    say "  not detected"
+  fi
+
+  say "[DOCKER]"
+  if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
+    say "  containers: $(docker ps -a -q | wc -l)"
+    say "  images:     $(docker image ls -q | sort -u | wc -l)"
+    say "  volumes:    $(docker volume ls -q | wc -l)"
+    say "  networks:   $(docker network ls -q | wc -l)"
+    docker ps -a --format '  + {{.Names}} -> {{.Image}}'
+  else
+    say "  not detected"
+  fi
+
+  say "[VPN]"
+  [[ -d /etc/wireguard ]] && say "  + WireGuard" || say "  - WireGuard not detected"
+  [[ -d /etc/openvpn ]] && say "  + OpenVPN" || say "  - OpenVPN not detected"
+  if systemctl list-unit-files 2>/dev/null | grep -qi wgdashboard; then
+    say "  + WGDashboard"
+  else
+    say "  - WGDashboard not detected"
+  fi
+
+  say "[RUSTDESK]"
+  if systemctl list-unit-files 2>/dev/null | grep -Eq 'hbbs|hbbr' || { command -v docker >/dev/null && docker ps -a --format '{{.Image}} {{.Names}}' 2>/dev/null | grep -qiE 'rustdesk|hbbs|hbbr'; }; then
+    say "  + RustDesk Server"
+  else
+    say "  - not detected"
+  fi
+
+  say "[MANUAL]"
+  tr ':' '\n' <<<"${INCLUDE_PATHS:-}" | while read -r p; do [[ -n "$p" ]] && say "  + $p"; done
+}
+
+backup(){
+  need_root; load_config
+  if [[ "${1:-}" == "--dry-run" ]]; then
+    discover
+    say
+    say "DRY RUN: no snapshot was created."
+    return
+  fi
+  command -v restic >/dev/null || die "restic is not installed."
+  [[ -n "${RESTIC_REPOSITORY:-}" ]] || die "Set RESTIC_REPOSITORY in the environment."
+  local paths=()
+  yesno "${BACKUP_CRON:-yes}" && paths+=(/etc/crontab /etc/cron.d /etc/cron.hourly /etc/cron.daily /etc/cron.weekly /etc/cron.monthly)
+  yesno "${BACKUP_SYSTEMD:-yes}" && paths+=(/etc/systemd/system)
+  yesno "${BACKUP_VPN:-yes}" && { [[ -d /etc/wireguard ]] && paths+=(/etc/wireguard); [[ -d /etc/openvpn ]] && paths+=(/etc/openvpn); }
+  IFS=: read -ra extra <<<"${INCLUDE_PATHS:-}"
+  for p in "${extra[@]}"; do [[ -e "$p" ]] && paths+=("$p"); done
+  say "Creating encrypted restic snapshot..."
+  restic backup "${paths[@]}" --tag bitx-bk --host "$(hostname)"
+  ok "backup complete"
+}
+
+repo_cmd(){
+  need_root; load_config
+  command -v restic >/dev/null || die "restic is not installed."
+  [[ -n "${RESTIC_REPOSITORY:-}" ]] || die "Set RESTIC_REPOSITORY in the environment."
+  restic "$@"
+}
+
+usage(){
+  cat <<EOF
+bitx-bk v$VERSION
+Usage:
+  bitx-bk doctor
+  bitx-bk discover
+  bitx-bk init
+  bitx-bk backup [--dry-run]
+  bitx-bk snapshots
+  bitx-bk check
+EOF
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  doctor) doctor ;;
+  discover) discover ;;
+  init) repo_cmd init ;;
+  backup) backup "${1:-}" ;;
+  snapshots) repo_cmd snapshots --tag bitx-bk ;;
+  check) repo_cmd check ;;
+  version|--version|-V) echo "$VERSION" ;;
+  help|--help|-h|"") usage ;;
+  *) usage; exit 2 ;;
+esac
