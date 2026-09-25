@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.6.0"
+VERSION="0.6.1"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -351,6 +351,50 @@ backup_plan(){
  info "Run backup uses logical DB dumps plus a controlled Docker stop/start consistency window."
 }
 
+collect_local_dependencies(){
+ local stage="$1" list="$stage/system/local-dependencies.txt"
+ : > "$list"
+
+ # Absolute paths referenced by cron definitions.
+ local f
+ for f in /etc/crontab /etc/cron.d/*; do
+  [[ -f "$f" ]] || continue
+  grep -Eo '/[^[:space:];|&><()"]+' "$f" 2>/dev/null || true
+ done >> "$list"
+ crontab -l 2>/dev/null | grep -Eo '/[^[:space:];|&><()"]+' >> "$list" || true
+
+ # Executables, scripts, EnvironmentFile and WorkingDirectory referenced by custom systemd units.
+ if command -v systemctl >/dev/null; then
+  while IFS= read -r unit; do
+   [[ -n "$unit" ]] || continue
+   systemctl show "$unit" -p ExecStart -p ExecStartPre -p ExecStartPost -p ExecReload -p ExecStop -p EnvironmentFiles -p WorkingDirectory 2>/dev/null |
+    grep -Eo '/[^[:space:];{}|&><()"]+' || true
+  done < <(find /etc/systemd/system /usr/local/lib/systemd/system -type f \( -name '*.service' -o -name '*.timer' \) -printf '%f\n' 2>/dev/null | sort -u)
+ fi >> "$list"
+
+ sed -i 's/[;,]$//' "$list"
+ sort -u -o "$list" "$list"
+
+ local -a deps=()
+ while IFS= read -r p; do
+  [[ "$p" == /* ]] || continue
+  # Keep local/admin-managed dependencies; distro executables are reconstructed from package inventory.
+  case "$p" in
+   /root/*|/home/*|/opt/*|/srv/*|/usr/local/*)
+    [[ -e "$p" ]] && deps+=("$p")
+    ;;
+  esac
+ done < "$list"
+
+ if (("${#deps[@]}" > 0)); then
+  printf '%s\n' "${deps[@]}" | sort -u > "$stage/system/local-dependencies-resolved.txt"
+  ok "Local cron/systemd dependencies discovered: $(sort -u "$stage/system/local-dependencies-resolved.txt" | wc -l)"
+ else
+  : > "$stage/system/local-dependencies-resolved.txt"
+  info "No additional local cron/systemd dependencies discovered"
+ fi
+}
+
 collect_and_backup(){
  need_root; load_config
  command -v restic >/dev/null || die "restic missing"
@@ -400,7 +444,12 @@ collect_and_backup(){
   ok "WireGuard collected"
  fi
 
+ collect_local_dependencies "$stage"
+
  local -a sources=()
+ if [[ -s "$stage/system/local-dependencies-resolved.txt" ]]; then
+  while IFS= read -r p; do [[ -e "$p" ]] && sources+=("$p"); done < "$stage/system/local-dependencies-resolved.txt"
+ fi
  if [[ "${BACKUP_DOCKER:-yes}" == yes ]] && command -v docker >/dev/null && docker info >/dev/null 2>&1; then
   docker version > "$stage/docker/version.txt" 2>/dev/null || true
   docker network ls > "$stage/docker/networks.txt" 2>/dev/null || true
