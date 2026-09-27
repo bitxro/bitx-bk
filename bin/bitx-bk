@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.9.8"
+VERSION="0.9.9"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -704,8 +704,7 @@ EOF
  ok "Collector staging complete"
  info "Docker project sources: ${#sources[@]}"
  info "Repository: $RESTIC_REPOSITORY"
- read -r -p "Create encrypted snapshot now? [y/N]: " answer
- [[ "$answer" =~ ^[Yy]$ ]] || { warn "Backup cancelled; no snapshot created."; rm -rf "$stage"; return 0; }
+ info "Starting encrypted backup..."
 
  local run_id="bitx-bk-run:$stamp"
  local backup_rc=0
