@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.10.1"
+VERSION="0.10.2"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -822,13 +822,13 @@ backup(){
  elapsed=$((finished-started))
 
  if ((rc==0)); then
-  telegram_send "🟢 bitx-bk backup OK
-Host: $host
+  telegram_send "🟢 bitx-bk backup OK — $host
+Server: $host
 Duration: ${elapsed}s
 Repository: ${RESTIC_REPOSITORY:-unknown}"
  else
-  telegram_send "🔴 bitx-bk backup FAILED
-Host: $host
+  telegram_send "🔴 bitx-bk backup FAILED — $host
+Server: $host
 Duration: ${elapsed}s
 Repository: ${RESTIC_REPOSITORY:-unknown}
 Exit code: $rc"
