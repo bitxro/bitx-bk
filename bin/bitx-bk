@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.12.1"
+VERSION="0.12.2"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -122,7 +122,14 @@ virtualmin_audit(){
   [[ -d /etc/nginx ]] && ok "Nginx"
   command -v mysql >/dev/null && ok "MySQL/MariaDB client"
   command -v pg_dump >/dev/null && ok "PostgreSQL tools"
-  warn "Native Virtualmin backup integration is not implemented yet; recovery is NOT VERIFIED."
+  if command -v virtualmin >/dev/null; then
+   ok "Native Virtualmin backup: enabled"
+   info "mode: all domains + all features + global Virtualmin settings"
+   info "format: newformat (separate domain archives)"
+   warn "Recovery uses Virtualmin restore-domain but remains NOT TESTED by bitx-bk."
+  else
+   warn "Virtualmin data detected, but virtualmin CLI is missing; native backup cannot run."
+  fi
  else
   info "Virtualmin not detected"
  fi
