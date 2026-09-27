@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.8.1"
+VERSION="0.8.2"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -352,15 +352,17 @@ repository_menu(){
   say
   heading "Backup repository"
   say "  1) Configure local directory"
-  say "  2) Repository status / snapshots"
-  say "  3) Repository check"
+  say "  2) Configure OneDrive (rclone)"
+  say "  3) Repository status / snapshots"
+  say "  4) Repository check"
   say "  0) Back"
   say
   read -r -p "Select: " x
   case "$x" in
    1) configure_local_repo; pause;;
-   2) repository_status; pause;;
-   3) repo_cmd check; pause;;
+   2) configure_onedrive_repo; pause;;
+   3) repository_status; pause;;
+   4) repo_cmd check; pause;;
    0) return;;
    *) warn "Invalid selection";;
   esac
@@ -738,6 +740,7 @@ menu(){
   say "  7) Restic repository check"
   say "  8) Backup plan"
   say "  9) Run backup"
+  say " 10) Notifications"
   say "  0) Exit"
   say
   read -r -p "Select: " choice
@@ -751,6 +754,7 @@ menu(){
    7) repo_cmd check; pause;;
    8) backup --plan; pause;;
    9) backup; pause;;
+   10) notifications_menu;;
    0) return;;
    *) warn "Invalid selection"; sleep 1;;
   esac
