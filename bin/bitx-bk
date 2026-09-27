@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.9.7"
+VERSION="0.9.8"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -400,7 +400,7 @@ repository_status(){
  heading "Restic Repository"
  info "repository: $RESTIC_REPOSITORY"
  [[ -n "${RESTIC_PASSWORD_FILE:-}" ]] && info "password file: $RESTIC_PASSWORD_FILE"
- if restic snapshots; then ok "repository accessible"; else error "repository check failed"; return 1; fi
+ if repo_cmd snapshots; then ok "repository accessible"; else error "repository check failed"; return 1; fi
 }
 
 
@@ -464,7 +464,7 @@ backup_plan(){
  heading "BITX-BK Backup Plan v$VERSION"; say "=========================="
 
  command -v restic >/dev/null || { error "restic missing"; return 1; }
- if restic_env && restic snapshots >/dev/null 2>&1; then
+ if restic_env && repo_cmd snapshots >/dev/null 2>&1; then
   ok "Restic repository: $RESTIC_REPOSITORY"
  else
   error "Restic repository is not ready"; return 1
@@ -579,7 +579,7 @@ collect_and_backup(){
  need_root; load_config
  command -v restic >/dev/null || die "restic missing"
  restic_env || die "Configure a Restic repository first."
- restic snapshots >/dev/null 2>&1 || die "Restic repository is not accessible."
+ repo_cmd snapshots >/dev/null 2>&1 || die "Restic repository is not accessible."
 
  local stage host stamp
  host=$(hostname)
@@ -736,7 +736,7 @@ EOF
  info "Creating system/metadata snapshot (no Docker downtime)..."
  local -a sys_args=("$stage")
  for p in "${non_docker_sources[@]}"; do sys_args+=("$p"); done
- if ! restic backup --tag bitx-bk --tag "host:$host" --tag "$run_id" --tag "scope:system" "${sys_args[@]}"; then
+ if ! repo_cmd backup --tag bitx-bk --tag "host:$host" --tag "$run_id" --tag "scope:system" "${sys_args[@]}"; then
   error "System/metadata snapshot failed."
   return 1
  fi
@@ -770,7 +770,7 @@ EOF
   fi
 
   set +e
-  restic backup --tag bitx-bk --tag "host:$host" --tag "$run_id" --tag "scope:docker" --tag "project:$(basename "$project")" "$project"
+  repo_cmd backup --tag bitx-bk --tag "host:$host" --tag "$run_id" --tag "scope:docker" --tag "project:$(basename "$project")" "$project"
   backup_rc=$?
   set -e
 
@@ -797,7 +797,7 @@ EOF
  rm -rf "$stage"
  ok "Backup run completed successfully."
  info "Run tag: $run_id"
- restic snapshots --tag "$run_id" || true
+ repo_cmd snapshots --tag "$run_id" || true
 }
 
 backup(){
