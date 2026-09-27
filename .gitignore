@@ -1,0 +1,21 @@
+# Local/editor files
+*.swp
+*.swo
+*~
+.DS_Store
+.vscode/
+.idea/
+
+# Runtime/temp files
+*.tmp
+*.log
+tmp/
+staging/
+
+# Secrets and local configuration must never enter Git
+.env
+.env.*
+*.secret
+secrets/
+bitx-bk.conf
+restic-password
