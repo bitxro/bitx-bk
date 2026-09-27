@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.9.6"
+VERSION="0.9.7"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -370,12 +370,13 @@ configure_sftp_repo(){
 
  sshcmd="-i $key -p $port -o IdentitiesOnly=yes -o BatchMode=yes"
  info "Testing passwordless SSH authentication..."
- if ! ssh -i "$key" -p "$port" -o IdentitiesOnly=yes -o BatchMode=yes "$user@$host" "mkdir -p -- '$path' && test -d '$path'"; then
-  error "Key authentication or remote directory setup failed."
+ if ! ssh -i "$key" -p "$port" -o IdentitiesOnly=yes -o BatchMode=yes "$user@$host" "true"; then
+  error "Key authentication failed."
   info "No SFTP repository settings were saved."
   return 1
  fi
  ok "Passwordless SSH connection verified."
+ info "Remote repository path will be handled through SFTP by Restic."
 
  password_file=$(ensure_restic_password)
  repo="sftp:$user@$host:$path"
