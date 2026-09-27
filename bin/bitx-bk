@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.8.2"
+VERSION="0.8.3"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -265,39 +265,6 @@ notifications_menu(){
  done
 }
 
-configure_onedrive_repo(){
- need_root; load_config
- command -v restic >/dev/null || die "restic missing"
- command -v rclone >/dev/null || { error "rclone is not installed. Install/configure rclone first, then return here."; return 1; }
- heading "Configure OneDrive Restic repository"
- info "Existing rclone remotes:"
- rclone listremotes 2>/dev/null || true
- local remote folder repo password_file
- read -r -p "rclone remote name [onedrive]: " remote; remote="${remote:-onedrive}"
- if ! rclone listremotes 2>/dev/null | grep -Fxq "$remote:"; then
-  warn "Remote '$remote:' does not exist."
-  info "Starting rclone configuration. Create a Microsoft OneDrive remote, then return."
-  rclone config
-  rclone listremotes 2>/dev/null | grep -Fxq "$remote:" || { error "Remote '$remote:' still not found."; return 1; }
- fi
- read -r -p "OneDrive folder [bitx-bk/$(hostname)]: " folder
- folder="${folder:-bitx-bk/$(hostname)}"
- repo="rclone:$remote:$folder"
- password_file="/etc/bitx-bk/restic-password"
- [[ -s "$password_file" ]] || { error "Restic password file missing: $password_file"; info "Configure a local repository first or restore your existing Restic password file."; return 1; }
- export RESTIC_REPOSITORY="$repo" RESTIC_PASSWORD_FILE="$password_file"
- if restic snapshots >/dev/null 2>&1; then
-  ok "Existing Restic repository detected."
- else
-  info "No accessible repository detected; initializing..."
-  restic init || { error "OneDrive repository initialization failed."; return 1; }
- fi
- save_setting RESTIC_REPOSITORY "$repo"
- save_setting RESTIC_PASSWORD_FILE "$password_file"
- ok "OneDrive repository configured: $repo"
- restic snapshots >/dev/null && ok "Repository verified" || error "Repository verification failed"
-}
-
 configure_local_repo(){
  need_root; load_config
  command -v restic >/dev/null || die "restic missing"
@@ -352,17 +319,15 @@ repository_menu(){
   say
   heading "Backup repository"
   say "  1) Configure local directory"
-  say "  2) Configure OneDrive (rclone)"
-  say "  3) Repository status / snapshots"
-  say "  4) Repository check"
+  say "  2) Repository status / snapshots"
+  say "  3) Repository check"
   say "  0) Back"
   say
   read -r -p "Select: " x
   case "$x" in
    1) configure_local_repo; pause;;
-   2) configure_onedrive_repo; pause;;
-   3) repository_status; pause;;
-   4) repo_cmd check; pause;;
+   2) repository_status; pause;;
+   3) repo_cmd check; pause;;
    0) return;;
    *) warn "Invalid selection";;
   esac
@@ -766,7 +731,7 @@ usage(){
 bitx-bk v$VERSION
 Usage: bitx-bk [command]
 No command opens the interactive menu.
-Commands: doctor, discover, docker-audit, virtualmin-audit, repo-config-local, repo-config-onedrive, repo-status, telegram-setup, telegram-test, backup --plan, backup, snapshots, check
+Commands: doctor, discover, docker-audit, virtualmin-audit, repo-config-local, repo-status, telegram-setup, telegram-test, backup --plan, backup, snapshots, check
 Colors: COLOR=auto|always|never (default auto); NO_COLOR disables colors in auto mode.
 EOF
 }
@@ -780,7 +745,6 @@ case "$cmd" in
  docker-audit) docker_audit;;
  virtualmin-audit) virtualmin_audit;;
  repo-config-local) configure_local_repo;;
- repo-config-onedrive) configure_onedrive_repo;;
  telegram-setup) telegram_setup;;
  telegram-test) telegram_send "bitx-bk | $(hostname)\nTelegram test notification.";;
  repo-status) repository_status;;
