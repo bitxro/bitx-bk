@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.11.1"
+VERSION="0.11.2"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -249,6 +249,27 @@ telegram_status(){
 }
 
 notifications_menu(){
+ while true; do
+  say
+  heading "Notifications"
+  say "  1) Telegram setup / update"
+  say "  2) Test Telegram notification"
+  say "  3) Status"
+  say "  0) Back"
+  say
+  read -r -p "Select: " x
+  case "$x" in
+   1) telegram_setup; pause;;
+   2) telegram_send "bitx-bk | $(hostname)
+Telegram test notification."; ok "Test requested"; pause;;
+   3) telegram_status; pause;;
+   0) return;;
+   *) warn "Invalid selection";;
+  esac
+ done
+}
+
+audits_menu(){
  while true; do
   say
   heading "Audits & diagnostics"
