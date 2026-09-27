@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.9.5"
+VERSION="0.9.6"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -329,8 +329,8 @@ configure_sftp_repo(){
  read -r -p "SFTP host/IP: " host
  read -r -p "SSH port [22]: " port; port="${port:-22}"
  read -r -p "SSH user: " user
- read -r -p "Remote base path [/volume1/$user]: " base
- base="${base:-/volume1/$user}"
+ read -r -p "Remote base path [/$user]: " base
+ base="${base:-/$user}"
  server_name=$(hostname | tr -c 'A-Za-z0-9._-' '_' | sed 's/_$//')
  path="${base%/}/$server_name"
  info "Server folder: $path"
