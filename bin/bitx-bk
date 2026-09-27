@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.12.3"
+VERSION="0.12.4"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -755,10 +755,17 @@ EOF
  local p
 
  for p in "${sources[@]}"; do
-  case "$p" in /opt/docker/*) docker_projects+=("$p");; *) non_docker_sources+=("$p");; esac
+  case "$p" in
+   /opt/docker/*) docker_projects+=("$p");;
+   *) non_docker_sources+=("$p");;
+  esac
  done
  if (("${#docker_projects[@]}" > 0)); then
-  mapfile -t docker_projects < <(printf '%s\n' "${docker_projects[@]}" | grep -v '^
+  mapfile -t docker_projects < <(printf '%s\n' "${docker_projects[@]}" | grep -v '^$' | sort -u)
+ fi
+ if (("${#non_docker_sources[@]}" > 0)); then
+  mapfile -t non_docker_sources < <(printf '%s\n' "${non_docker_sources[@]}" | grep '^/' | sort -u)
+ fi
 
  # Any container stopped by this run is recorded here so EXIT/INT/TERM can recover it.
  local recovery_file="$stage/docker/stopped-by-bitx-bk"
