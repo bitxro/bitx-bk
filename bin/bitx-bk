@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.6.4"
+VERSION="0.6.5"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -364,6 +364,10 @@ collect_local_dependencies(){
  while IFS= read -r p; do
   [[ "$p" == /* ]] || continue
   # Keep local/admin-managed dependencies; distro executables are reconstructed from package inventory.
+  # Never let a parser artifact expand the backup to an entire generic root.
+  case "${p%/}" in
+   /root|/home|/opt|/srv|/usr/local) continue ;;
+  esac
   case "$p" in
    /root/*|/home/*|/opt/*|/srv/*|/usr/local/*)
     [[ -e "$p" ]] && deps+=("$p")
