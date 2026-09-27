@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.11.5"
+VERSION="0.12.0"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -508,6 +508,21 @@ backup_plan(){
    }
   }')
 
+ say; heading "[VIRTUALMIN]"
+ if command -v virtualmin >/dev/null || [[ -d /etc/webmin/virtual-server ]]; then
+  if command -v virtualmin >/dev/null; then
+   local vdomains
+   vdomains=$(virtualmin list-domains --name-only 2>/dev/null | sed '/^$/d' | wc -l || true)
+   ok "Virtualmin detected: $vdomains virtual server(s)"
+   ok "Native backup will run: all domains + all features + global Virtualmin settings"
+   info "Format: newformat; destination: encrypted Restic staging"
+  else
+   error "Virtualmin data detected but virtualmin CLI is missing; backup would fail."
+  fi
+ else
+  info "Virtualmin not detected; native Virtualmin backup will be skipped."
+ fi
+
  say; heading "[FINAL BACKUP SOURCES]"
  info "/var/lib/bitx-bk/staging/current (system metadata, manifests and DB dumps)"
  for p in "${final[@]}"; do [[ -e "$p" ]] && ok "$p" || warn "missing: $p"; done
@@ -618,6 +633,32 @@ collect_and_backup(){
 
  collect_local_dependencies "$stage"
 
+ # Virtualmin's native backup is the authoritative application-aware copy for hosted domains.
+ # It captures domain data/features plus global Virtualmin settings for restore-domain DR.
+ if command -v virtualmin >/dev/null || [[ -d /etc/webmin/virtual-server ]]; then
+  if ! command -v virtualmin >/dev/null; then
+   error "Virtualmin data detected but the virtualmin CLI is missing."
+   error "Backup aborted; native Virtualmin backup cannot be created."
+   return 1
+  fi
+  local virtualmin_dir="$stage/virtualmin"
+  mkdir -p "$virtualmin_dir"; chmod 700 "$virtualmin_dir"
+  info "Creating native Virtualmin backup..."
+  info "All domains + all features + global Virtualmin settings"
+  if virtualmin backup-domain --dest "$virtualmin_dir/" --all-domains --all-features --newformat --all-virtualmin; then
+   find "$virtualmin_dir" -type f -exec chmod 600 {} + 2>/dev/null || true
+   local vfiles vbytes
+   vfiles=$(find "$virtualmin_dir" -type f 2>/dev/null | wc -l)
+   vbytes=$(du -sb "$virtualmin_dir" 2>/dev/null | awk '{print $1}' || printf '0')
+   printf 'virtualmin-native-backup=yes\nvirtualmin-files=%s\nvirtualmin-bytes=%s\n' "$vfiles" "$vbytes" > "$stage/system/virtualmin-backup.txt"
+   ok "Native Virtualmin backup complete: $vfiles file(s)"
+  else
+   error "Native Virtualmin backup failed."
+   error "Backup aborted; no Restic snapshot will be created for this run."
+   return 1
+  fi
+ fi
+
  local -a sources=()
  [[ -d /etc/bitx-bk ]] && sources+=("/etc/bitx-bk")
  [[ -d /etc/secrets ]] && sources+=("/etc/secrets")
@@ -690,6 +731,7 @@ bitx-bk-version=$VERSION
 host=$host
 created-utc=$stamp
 repository=$RESTIC_REPOSITORY
+virtualmin-native-backup=$([[ -d "$stage/virtualmin" ]] && echo yes || echo no)
 EOF
  printf 'source=%s\n' "${sources[@]}" >> "$stage/manifest.txt"
 
