@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.10.0"
+VERSION="0.10.1"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -810,7 +810,30 @@ EOF
 backup(){
  need_root; load_config
  if [[ "${1:-}" == "--dry-run" || "${1:-}" == "--plan" ]]; then backup_plan; return; fi
+
+ local started finished elapsed rc host
+ started=$(date +%s)
+ host=$(hostname)
+ set +e
  collect_and_backup
+ rc=$?
+ set -e
+ finished=$(date +%s)
+ elapsed=$((finished-started))
+
+ if ((rc==0)); then
+  telegram_send "🟢 bitx-bk backup OK
+Host: $host
+Duration: ${elapsed}s
+Repository: ${RESTIC_REPOSITORY:-unknown}"
+ else
+  telegram_send "🔴 bitx-bk backup FAILED
+Host: $host
+Duration: ${elapsed}s
+Repository: ${RESTIC_REPOSITORY:-unknown}
+Exit code: $rc"
+ fi
+ return "$rc"
 }
 
 menu(){
