@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.9.4"
+VERSION="0.9.5"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -368,7 +368,7 @@ configure_sftp_repo(){
   *) error "Invalid selection."; return 1;;
  esac
 
- sshcmd="ssh -i $key -p $port -o IdentitiesOnly=yes -o BatchMode=yes"
+ sshcmd="-i $key -p $port -o IdentitiesOnly=yes -o BatchMode=yes"
  info "Testing passwordless SSH authentication..."
  if ! ssh -i "$key" -p "$port" -o IdentitiesOnly=yes -o BatchMode=yes "$user@$host" "mkdir -p -- '$path' && test -d '$path'"; then
   error "Key authentication or remote directory setup failed."
@@ -379,18 +379,18 @@ configure_sftp_repo(){
 
  password_file=$(ensure_restic_password)
  repo="sftp:$user@$host:$path"
- export RESTIC_REPOSITORY="$repo" RESTIC_PASSWORD_FILE="$password_file" RESTIC_SFTP_COMMAND="$sshcmd"
- if restic -o "sftp.command=$sshcmd" snapshots >/dev/null 2>&1; then
+ export RESTIC_REPOSITORY="$repo" RESTIC_PASSWORD_FILE="$password_file" RESTIC_SFTP_ARGS="$sshcmd"
+ if restic -o "sftp.args=$sshcmd" snapshots >/dev/null 2>&1; then
   ok "Existing Restic repository detected."
  else
   info "Initializing encrypted Restic repository over SFTP..."
-  restic -o "sftp.command=$sshcmd" init || { error "SFTP repository initialization failed."; return 1; }
+  restic -o "sftp.args=$sshcmd" init || { error "SFTP repository initialization failed."; return 1; }
  fi
  save_setting RESTIC_REPOSITORY "$repo"
  save_setting RESTIC_PASSWORD_FILE "$password_file"
- save_setting RESTIC_SFTP_COMMAND "$sshcmd"
+ save_setting RESTIC_SFTP_ARGS "$sshcmd"
  ok "SFTP repository configured and verified."
- restic -o "sftp.command=$sshcmd" snapshots >/dev/null || { error "Repository verification failed."; return 1; }
+ restic -o "sftp.args=$sshcmd" snapshots >/dev/null || { error "Repository verification failed."; return 1; }
 }
 
 repository_status(){
@@ -416,9 +416,9 @@ disconnect_repository(){
  read -r -p "Disconnect this repository? [y/N]: " answer
  [[ "$answer" =~ ^[Yy]$ ]] || { info "Cancelled."; return; }
  tmp=$(mktemp)
- awk '!/^RESTIC_REPOSITORY=/ && !/^RESTIC_PASSWORD_FILE=/ && !/^RESTIC_SFTP_COMMAND=/' "$CONFIG" > "$tmp"
+ awk '!/^RESTIC_REPOSITORY=/ && !/^RESTIC_PASSWORD_FILE=/ && !/^RESTIC_SFTP_ARGS=/' "$CONFIG" > "$tmp"
  cat "$tmp" > "$CONFIG"; rm -f "$tmp"; chmod 600 "$CONFIG"
- unset RESTIC_REPOSITORY RESTIC_PASSWORD_FILE RESTIC_SFTP_COMMAND 2>/dev/null || true
+ unset RESTIC_REPOSITORY RESTIC_PASSWORD_FILE RESTIC_SFTP_ARGS 2>/dev/null || true
  ok "Repository disconnected from bitx-bk."
  info "No backup data was deleted."
 }
@@ -451,8 +451,8 @@ repo_cmd(){
  need_root
  command -v restic >/dev/null || die "restic missing"
  restic_env || die "Configure a Restic repository first."
- if [[ -n "${RESTIC_SFTP_COMMAND:-}" ]]; then
-  restic -o "sftp.command=$RESTIC_SFTP_COMMAND" "$@"
+ if [[ -n "${RESTIC_SFTP_ARGS:-}" ]]; then
+  restic -o "sftp.args=$RESTIC_SFTP_ARGS" "$@"
  else
   restic "$@"
  fi
