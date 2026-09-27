@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.11.4"
+VERSION="0.11.5"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -299,9 +299,9 @@ ensure_restic_password(){
   if command -v openssl >/dev/null; then openssl rand -base64 32 > "$password_file"
   else tr -dc 'A-Za-z0-9' </dev/urandom | head -c 48 > "$password_file"; printf '\n' >> "$password_file"; fi
   chmod 600 "$password_file"
-  ok "Generated repository password file."
+  ok "Generated repository password file." >&2
  fi
- printf '%s' "$password_file"
+ printf '%s\n' "$password_file"
 }
 
 configure_sftp_repo(){
