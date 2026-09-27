@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.9.9"
+VERSION="0.10.0"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -474,6 +474,8 @@ backup_plan(){
  [[ "${BACKUP_CRON:-yes}" == yes ]] && ok "Cron configuration"
  [[ "${BACKUP_SYSTEMD:-yes}" == yes ]] && ok "Systemd configuration and unit metadata"
  [[ "${BACKUP_SYSTEM_INFO:-yes}" == yes ]] && ok "System inventory"
+ [[ -d /etc/bitx-bk ]] && ok "bitx-bk configuration, Telegram secrets and SFTP key (/etc/bitx-bk)"
+ [[ -d /etc/secrets ]] && ok "System secrets (/etc/secrets)"
 
  local plan_stage="/var/lib/bitx-bk/staging/plan"
  rm -rf "$plan_stage"; mkdir -p "$plan_stage/system"; chmod 700 "$plan_stage"
@@ -505,6 +507,8 @@ backup_plan(){
 
  if [[ -s "$plan_stage/system/local-dependencies-resolved.txt" ]]; then mapfile -t deps < "$plan_stage/system/local-dependencies-resolved.txt"; fi
  final=("${projects[@]}" "${deps[@]}")
+ [[ -d /etc/bitx-bk ]] && final+=("/etc/bitx-bk")
+ [[ -d /etc/secrets ]] && final+=("/etc/secrets")
  # Remove duplicates and any child path already covered by a parent source.
  mapfile -t final < <(printf '%s\n' "${final[@]}" | grep '^/' | sort -u | awk '
   { a[NR]=$0 }
@@ -627,6 +631,10 @@ collect_and_backup(){
  collect_local_dependencies "$stage"
 
  local -a sources=()
+ # DR essentials: bitx-bk config/secrets/SSH key and optional system secrets.
+ # The Restic password is included only as encrypted redundancy; an external copy is still required for disaster recovery.
+ [[ -d /etc/bitx-bk ]] && sources+=("/etc/bitx-bk")
+ [[ -d /etc/secrets ]] && sources+=("/etc/secrets")
  if [[ -s "$stage/system/local-dependencies-resolved.txt" ]]; then
   while IFS= read -r p; do [[ -e "$p" ]] && sources+=("$p"); done < "$stage/system/local-dependencies-resolved.txt"
  fi
