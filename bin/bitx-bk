@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.11.3"
+VERSION="0.11.4"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -249,7 +249,10 @@ telegram_status(){
 }
 
 configure_local_repo(){
- need_root; load_config
+ need_root
+ mkdir -p "$(dirname "$CONFIG")"; chmod 700 "$(dirname "$CONFIG")"
+ [[ -e "$CONFIG" ]] || { touch "$CONFIG"; chmod 600 "$CONFIG"; }
+ load_config
  command -v restic >/dev/null || die "restic missing"
  heading "Configure local Restic repository"
 
@@ -302,7 +305,10 @@ ensure_restic_password(){
 }
 
 configure_sftp_repo(){
- need_root; load_config
+ need_root
+ mkdir -p "$(dirname "$CONFIG")"; chmod 700 "$(dirname "$CONFIG")"
+ [[ -e "$CONFIG" ]] || { touch "$CONFIG"; chmod 600 "$CONFIG"; }
+ load_config
  command -v restic >/dev/null || die "restic missing"
  command -v ssh >/dev/null || { error "OpenSSH client is required."; return 1; }
  command -v ssh-keygen >/dev/null || { error "ssh-keygen is required."; return 1; }
