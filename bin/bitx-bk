@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.6.1"
+VERSION="0.6.2"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -276,75 +276,59 @@ backup_plan(){
  if restic_env && restic snapshots >/dev/null 2>&1; then
   ok "Restic repository: $RESTIC_REPOSITORY"
  else
-  error "Restic repository is not ready"
-  return 1
+  error "Restic repository is not ready"; return 1
  fi
 
  say; heading "[SYSTEM]"
- [[ "${BACKUP_CRON:-yes}" == yes ]] && ok "Cron configuration will be collected"
- [[ "${BACKUP_SYSTEMD:-yes}" == yes ]] && ok "Systemd configuration and unit metadata will be collected"
- [[ "${BACKUP_SYSTEM_INFO:-yes}" == yes ]] && ok "System inventory will be collected"
+ [[ "${BACKUP_CRON:-yes}" == yes ]] && ok "Cron configuration"
+ [[ "${BACKUP_SYSTEMD:-yes}" == yes ]] && ok "Systemd configuration and unit metadata"
+ [[ "${BACKUP_SYSTEM_INFO:-yes}" == yes ]] && ok "System inventory"
+
+ local plan_stage="/var/lib/bitx-bk/staging/plan"
+ rm -rf "$plan_stage"; mkdir -p "$plan_stage/system"; chmod 700 "$plan_stage"
+ collect_local_dependencies "$plan_stage"
+ say; heading "[CRON / SYSTEMD DEPENDENCIES]"
+ if [[ -s "$plan_stage/system/local-dependencies-resolved.txt" ]]; then
+  while IFS= read -r p; do ok "$p"; done < "$plan_stage/system/local-dependencies-resolved.txt"
+ else
+  info "No additional local dependencies detected"
+ fi
 
  say; heading "[VPN]"
- if [[ "${BACKUP_VPN:-yes}" == yes && -d /etc/wireguard ]]; then
-  ok "WireGuard configuration detected (secret material will stay inside encrypted snapshot)"
- else
-  info "No WireGuard configuration selected/detected"
- fi
+ if [[ "${BACKUP_VPN:-yes}" == yes && -d /etc/wireguard ]]; then ok "WireGuard"; else info "WireGuard not selected/detected"; fi
 
- local -a projects=() binds=()
+ local -a projects=() final=() deps=()
  say; heading "[DOCKER]"
  if [[ "${BACKUP_DOCKER:-yes}" == yes ]] && command -v docker >/dev/null && docker info >/dev/null 2>&1; then
-  local containers dbs=0
-  containers=$(docker ps -a -q | wc -l)
-  info "containers: $containers"
+  info "containers: $(docker ps -a -q | wc -l)"
+  while IFS='|' read -r name image wd; do
+   [[ -n "$name" ]] || continue
+   if [[ -n "$wd" && "$wd" != "<no value>" ]]; then info "$name -> $image [$wd]"; else info "$name -> $image"; fi
+   case "${image,,}" in *mariadb*|*mysql*|*postgres*) warn "database workload: $name ($image) -> logical dump";; esac
+  done < <(while IFS= read -r id; do
+    docker inspect -f '{{.Name}}|{{.Config.Image}}|{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$id" 2>/dev/null | sed 's#^/##'
+   done < <(docker ps -a -q))
 
-  mapfile -t projects < <(
-   docker ps -a -q |
-   xargs -r docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' 2>/dev/null |
-   grep -vE '^$|^<no value>$' |
-   sort -u
-  )
-
-  mapfile -t binds < <(
-   docker ps -a -q |
-   xargs -r docker inspect -f '{{range .Mounts}}{{if eq .Type "bind"}}{{println .Source}}{{end}}{{end}}' 2>/dev/null |
-   grep '^/' |
-   sort -u
-  )
-
-  info "Compose project directories: ${#projects[@]}"
-  for p in "${projects[@]}"; do
-   [[ -e "$p" ]] && ok "$p" || error "missing: $p"
-  done
-
-  info "unique bind sources: ${#binds[@]}"
-  while IFS= read -r line; do
-   [[ -n "$line" ]] || continue
-   local n i
-   n=${line%%|*}
-   i=${line#*|}
-   case "${i,,}" in
-    *mariadb*|*mysql*|*postgres*)
-     warn "database workload: $n ($i) - logical dump required before real backup"
-     ((dbs+=1))
-     ;;
-   esac
-  done < <(docker ps -a --format '{{.Names}}|{{.Image}}')
-
-  if ((dbs==0)); then
-   ok "No MariaDB/MySQL/PostgreSQL container detected"
-  else
-   info "database workloads requiring hooks: $dbs"
-  fi
- else
-  info "Docker not selected/detected"
+  mapfile -t projects < <(docker ps -a -q | xargs -r docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' 2>/dev/null | grep -vE '^$|^<no value>$' | sort -u)
  fi
 
- say; heading "[BACKUP SOURCES]"
- info "System metadata will be staged at /var/lib/bitx-bk/staging/current (root-only)."
- for p in "${projects[@]}"; do [[ -n "$p" ]] && say "  $p"; done
- for p in "${binds[@]}"; do [[ -n "$p" ]] && say "  $p"; done
+ if [[ -s "$plan_stage/system/local-dependencies-resolved.txt" ]]; then mapfile -t deps < "$plan_stage/system/local-dependencies-resolved.txt"; fi
+ final=("${projects[@]}" "${deps[@]}")
+ # Remove duplicates and any child path already covered by a parent source.
+ mapfile -t final < <(printf '%s\n' "${final[@]}" | grep '^/' | sort -u | awk '
+  { a[NR]=$0 }
+  END {
+   for(i=1;i<=NR;i++){
+    covered=0
+    for(j=1;j<=NR;j++) if(i!=j && index(a[i],a[j]"/")==1){covered=1;break}
+    if(!covered) print a[i]
+   }
+  }')
+
+ say; heading "[FINAL BACKUP SOURCES]"
+ info "/var/lib/bitx-bk/staging/current (system metadata, manifests and DB dumps)"
+ for p in "${final[@]}"; do [[ -e "$p" ]] && ok "$p" || warn "missing: $p"; done
+ rm -rf "$plan_stage"
 
  say
  warn "PLAN ONLY: no snapshot has been created."
