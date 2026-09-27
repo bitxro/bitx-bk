@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.7.0"
+VERSION="0.8.0"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -190,6 +190,112 @@ save_setting(){
  cat "$tmp" > "$CONFIG"
  rm -f "$tmp"
  chmod 600 "$CONFIG"
+}
+
+telegram_secret_file="/etc/bitx-bk/secrets/telegram.conf"
+
+telegram_load(){
+ [[ -r "$telegram_secret_file" ]] || return 1
+ local mode
+ mode=$(stat -c '%a' "$telegram_secret_file" 2>/dev/null || true)
+ [[ "$mode" == 600 ]] || { warn "Telegram secret file must be chmod 600."; return 1; }
+ source "$telegram_secret_file"
+ [[ -n "${TELEGRAM_BOT_TOKEN:-}" && -n "${TELEGRAM_CHAT_ID:-}" ]]
+}
+
+telegram_send(){
+ local text="$1"
+ telegram_load || return 0
+ command -v curl >/dev/null || { warn "Telegram notification skipped: curl missing"; return 0; }
+ local cfg
+ cfg=$(mktemp); chmod 600 "$cfg"
+ {
+  printf 'silent\nshow-error\nfail\n'
+  printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TELEGRAM_BOT_TOKEN"
+  printf 'data-urlencode = "chat_id=%s"\n' "$TELEGRAM_CHAT_ID"
+  printf 'data-urlencode = "text=%s"\n' "$text"
+  printf 'output = "/dev/null"\n'
+ } > "$cfg"
+ if ! curl --config "$cfg"; then warn "Telegram notification failed (backup result unchanged)."; fi
+ rm -f "$cfg"
+ return 0
+}
+
+telegram_setup(){
+ need_root
+ command -v curl >/dev/null || { warn "curl is required for Telegram notifications."; return 1; }
+ local token chat
+ heading "Telegram setup"
+ read -r -s -p "Bot token: " token; say
+ read -r -p "Chat ID: " chat
+ [[ -n "$token" && -n "$chat" ]] || { error "Token and Chat ID are required."; return 1; }
+ mkdir -p /etc/bitx-bk/secrets; chmod 700 /etc/bitx-bk/secrets
+ { printf 'TELEGRAM_BOT_TOKEN=%q\n' "$token"; printf 'TELEGRAM_CHAT_ID=%q\n' "$chat"; } > "$telegram_secret_file"
+ chmod 600 "$telegram_secret_file"
+ unset TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID
+ ok "Telegram credentials saved securely."
+ telegram_send "bitx-bk | $(hostname)\nTelegram notifications configured successfully."
+}
+
+telegram_status(){
+ heading "Telegram notifications"
+ if telegram_load; then
+  ok "configured"
+  info "Chat ID configured"
+  command -v curl >/dev/null && ok "curl available" || warn "curl missing"
+ else info "not configured"; fi
+ unset TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID 2>/dev/null || true
+}
+
+notifications_menu(){
+ while true; do
+  say; heading "Notifications"
+  say "  1) Telegram setup / update"
+  say "  2) Test Telegram notification"
+  say "  3) Status"
+  say "  0) Back"; say
+  read -r -p "Select: " x
+  case "$x" in
+   1) telegram_setup; pause;;
+   2) telegram_send "bitx-bk | $(hostname)\nTelegram test notification."; ok "Test requested"; pause;;
+   3) telegram_status; pause;;
+   0) return;;
+   *) warn "Invalid selection";;
+  esac
+ done
+}
+
+configure_onedrive_repo(){
+ need_root; load_config
+ command -v restic >/dev/null || die "restic missing"
+ command -v rclone >/dev/null || { error "rclone is not installed. Install/configure rclone first, then return here."; return 1; }
+ heading "Configure OneDrive Restic repository"
+ info "Existing rclone remotes:"
+ rclone listremotes 2>/dev/null || true
+ local remote folder repo password_file
+ read -r -p "rclone remote name [onedrive]: " remote; remote="${remote:-onedrive}"
+ if ! rclone listremotes 2>/dev/null | grep -Fxq "$remote:"; then
+  warn "Remote '$remote:' does not exist."
+  info "Starting rclone configuration. Create a Microsoft OneDrive remote, then return."
+  rclone config
+  rclone listremotes 2>/dev/null | grep -Fxq "$remote:" || { error "Remote '$remote:' still not found."; return 1; }
+ fi
+ read -r -p "OneDrive folder [bitx-bk/$(hostname)]: " folder
+ folder="${folder:-bitx-bk/$(hostname)}"
+ repo="rclone:$remote:$folder"
+ password_file="/etc/bitx-bk/restic-password"
+ [[ -s "$password_file" ]] || { error "Restic password file missing: $password_file"; info "Configure a local repository first or restore your existing Restic password file."; return 1; }
+ export RESTIC_REPOSITORY="$repo" RESTIC_PASSWORD_FILE="$password_file"
+ if restic snapshots >/dev/null 2>&1; then
+  ok "Existing Restic repository detected."
+ else
+  info "No accessible repository detected; initializing..."
+  restic init || { error "OneDrive repository initialization failed."; return 1; }
+ fi
+ save_setting RESTIC_REPOSITORY "$repo"
+ save_setting RESTIC_PASSWORD_FILE "$password_file"
+ ok "OneDrive repository configured: $repo"
+ restic snapshots >/dev/null && ok "Repository verified" || error "Repository verification failed"
 }
 
 configure_local_repo(){
@@ -656,7 +762,7 @@ usage(){
 bitx-bk v$VERSION
 Usage: bitx-bk [command]
 No command opens the interactive menu.
-Commands: doctor, discover, docker-audit, virtualmin-audit, repo-config-local, repo-status, backup --plan, backup, snapshots, check
+Commands: doctor, discover, docker-audit, virtualmin-audit, repo-config-local, repo-config-onedrive, repo-status, telegram-setup, telegram-test, backup --plan, backup, snapshots, check
 Colors: COLOR=auto|always|never (default auto); NO_COLOR disables colors in auto mode.
 EOF
 }
@@ -669,7 +775,7 @@ case "$cmd" in
  discover) discover;;
  docker-audit) docker_audit;;
  virtualmin-audit) virtualmin_audit;;
- repo-config-local) configure_local_repo;;
+ repo-config-local) configure_local_repo;;\n repo-config-onedrive) configure_onedrive_repo;;\n telegram-setup) telegram_setup;;\n telegram-test) telegram_send "bitx-bk | $(hostname)\\nTelegram test notification.";;
  repo-status) repository_status;;
  backup) backup "${1:-}";;
  snapshots) repo_cmd snapshots --tag bitx-bk;;
