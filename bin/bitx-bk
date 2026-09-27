@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.8.3"
+VERSION="0.9.0"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -177,6 +177,7 @@ restic_env(){
  [[ -n "${RESTIC_REPOSITORY:-}" ]] || return 1
  export RESTIC_REPOSITORY
  if [[ -n "${RESTIC_PASSWORD_FILE:-}" ]]; then export RESTIC_PASSWORD_FILE; fi
+ if [[ -n "${RESTIC_SFTP_COMMAND:-}" ]]; then export RESTIC_SFTP_COMMAND; fi
 }
 
 save_setting(){
@@ -305,6 +306,74 @@ configure_local_repo(){
  restic snapshots >/dev/null && ok "Repository initialized and verified: $path" || error "Repository verification failed."
 }
 
+
+ensure_restic_password(){
+ local password_file="/etc/bitx-bk/restic-password"
+ mkdir -p /etc/bitx-bk; chmod 700 /etc/bitx-bk
+ if [[ ! -s "$password_file" ]]; then
+  if command -v openssl >/dev/null; then openssl rand -base64 32 > "$password_file"
+  else tr -dc 'A-Za-z0-9' </dev/urandom | head -c 48 > "$password_file"; printf '\n' >> "$password_file"; fi
+  chmod 600 "$password_file"
+  ok "Generated repository password file."
+ fi
+ printf '%s' "$password_file"
+}
+
+configure_sftp_repo(){
+ need_root; load_config
+ command -v restic >/dev/null || die "restic missing"
+ command -v ssh >/dev/null || { error "OpenSSH client is required."; return 1; }
+ command -v ssh-keygen >/dev/null || { error "ssh-keygen is required."; return 1; }
+ heading "Configure SFTP Restic repository"
+ local host port user path ssh_dir key pub password_file repo sshcmd
+ read -r -p "SFTP host/IP: " host
+ read -r -p "SSH port [22]: " port; port="${port:-22}"
+ read -r -p "SSH user: " user
+ read -r -p "Remote repository path [/backup/bitx-bk/$(hostname)]: " path
+ path="${path:-/backup/bitx-bk/$(hostname)}"
+ [[ -n "$host" && -n "$user" ]] || { error "Host and user are required."; return 1; }
+ [[ "$port" =~ ^[0-9]+$ ]] || { error "Invalid SSH port."; return 1; }
+ [[ "$path" == /* ]] || { error "Remote repository path must be absolute."; return 1; }
+
+ ssh_dir="/etc/bitx-bk/ssh"; key="$ssh_dir/id_ed25519"; pub="$key.pub"
+ mkdir -p "$ssh_dir"; chmod 700 "$ssh_dir"
+ if [[ ! -s "$key" ]]; then
+  ssh-keygen -q -t ed25519 -N "" -C "bitx-bk@$(hostname)" -f "$key" || return 1
+  chmod 600 "$key"; chmod 644 "$pub"
+  ok "Generated dedicated SSH key."
+ fi
+ say
+ info "Install this public key on $user@$host:"
+ say "------------------------------------------------------"
+ cat "$pub"
+ say "------------------------------------------------------"
+ info "The first connection may ask you to verify the server host key."
+ read -r -p "Press Enter after the public key has been authorized on the SFTP server..." _
+
+ sshcmd="ssh -i $key -p $port -o IdentitiesOnly=yes"
+ if ! ssh -i "$key" -p "$port" -o IdentitiesOnly=yes "$user@$host" "mkdir -p -- '$path' && test -d '$path'"; then
+  error "SSH/SFTP connection or remote directory setup failed."
+  return 1
+ fi
+ ok "SSH connection verified."
+
+ password_file=$(ensure_restic_password)
+ repo="sftp:$user@$host:$path"
+ export RESTIC_REPOSITORY="$repo" RESTIC_PASSWORD_FILE="$password_file"
+ export RESTIC_SFTP_COMMAND="$sshcmd"
+ if restic snapshots >/dev/null 2>&1; then
+  ok "Existing Restic repository detected."
+ else
+  info "Initializing encrypted Restic repository over SFTP..."
+  restic init || { error "SFTP repository initialization failed."; return 1; }
+ fi
+ save_setting RESTIC_REPOSITORY "$repo"
+ save_setting RESTIC_PASSWORD_FILE "$password_file"
+ save_setting RESTIC_SFTP_COMMAND "$sshcmd"
+ ok "SFTP repository configured and verified."
+ restic snapshots >/dev/null || { error "Repository verification failed."; return 1; }
+}
+
 repository_status(){
  need_root
  if ! restic_env; then warn "Repository not configured."; return; fi
@@ -319,15 +388,17 @@ repository_menu(){
   say
   heading "Backup repository"
   say "  1) Configure local directory"
-  say "  2) Repository status / snapshots"
-  say "  3) Repository check"
+  say "  2) Configure SFTP"
+  say "  3) Repository status / snapshots"
+  say "  4) Repository check"
   say "  0) Back"
   say
   read -r -p "Select: " x
   case "$x" in
    1) configure_local_repo; pause;;
-   2) repository_status; pause;;
-   3) repo_cmd check; pause;;
+   2) configure_sftp_repo; pause;;
+   3) repository_status; pause;;
+   4) repo_cmd check; pause;;
    0) return;;
    *) warn "Invalid selection";;
   esac
@@ -731,7 +802,7 @@ usage(){
 bitx-bk v$VERSION
 Usage: bitx-bk [command]
 No command opens the interactive menu.
-Commands: doctor, discover, docker-audit, virtualmin-audit, repo-config-local, repo-status, telegram-setup, telegram-test, backup --plan, backup, snapshots, check
+Commands: doctor, discover, docker-audit, virtualmin-audit, repo-config-local, repo-config-sftp, repo-status, telegram-setup, telegram-test, backup --plan, backup, snapshots, check
 Colors: COLOR=auto|always|never (default auto); NO_COLOR disables colors in auto mode.
 EOF
 }
@@ -745,6 +816,7 @@ case "$cmd" in
  docker-audit) docker_audit;;
  virtualmin-audit) virtualmin_audit;;
  repo-config-local) configure_local_repo;;
+ repo-config-sftp) configure_sftp_repo;;
  telegram-setup) telegram_setup;;
  telegram-test) telegram_send "bitx-bk | $(hostname)\nTelegram test notification.";;
  repo-status) repository_status;;
