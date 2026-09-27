@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.9.2"
+VERSION="0.9.3"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -402,6 +402,27 @@ repository_status(){
  if restic snapshots; then ok "repository accessible"; else error "repository check failed"; return 1; fi
 }
 
+
+disconnect_repository(){
+ need_root
+ [[ -f "$CONFIG" ]] || { info "No repository configuration found."; return; }
+ local current="" answer tmp
+ current=$(awk -F= '/^RESTIC_REPOSITORY=/{sub(/^[^=]*=/,""); print; exit}' "$CONFIG" 2>/dev/null || true)
+ if [[ -z "$current" ]]; then info "No repository is currently configured."; return; fi
+ heading "Disconnect backup repository"
+ info "Configured repository: $current"
+ warn "This removes only the bitx-bk connection settings."
+ info "Repository data, snapshots, SSH keys and the Restic password file will NOT be deleted."
+ read -r -p "Disconnect this repository? [y/N]: " answer
+ [[ "$answer" =~ ^[Yy]$ ]] || { info "Cancelled."; return; }
+ tmp=$(mktemp)
+ awk '!/^RESTIC_REPOSITORY=/ && !/^RESTIC_PASSWORD_FILE=/ && !/^RESTIC_SFTP_COMMAND=/' "$CONFIG" > "$tmp"
+ cat "$tmp" > "$CONFIG"; rm -f "$tmp"; chmod 600 "$CONFIG"
+ unset RESTIC_REPOSITORY RESTIC_PASSWORD_FILE RESTIC_SFTP_COMMAND 2>/dev/null || true
+ ok "Repository disconnected from bitx-bk."
+ info "No backup data was deleted."
+}
+
 repository_menu(){
  while true; do
   say
@@ -410,6 +431,7 @@ repository_menu(){
   say "  2) Configure SFTP"
   say "  3) Repository status / snapshots"
   say "  4) Repository check"
+  say "  5) Disconnect repository"
   say "  0) Back"
   say
   read -r -p "Select: " x
@@ -418,6 +440,7 @@ repository_menu(){
    2) configure_sftp_repo; pause;;
    3) repository_status; pause;;
    4) repo_cmd check; pause;;
+   5) disconnect_repository; pause;;
    0) return;;
    *) warn "Invalid selection";;
   esac
