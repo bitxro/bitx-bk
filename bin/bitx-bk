@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.9.1"
+VERSION="0.9.2"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -325,15 +325,19 @@ configure_sftp_repo(){
  command -v ssh >/dev/null || { error "OpenSSH client is required."; return 1; }
  command -v ssh-keygen >/dev/null || { error "ssh-keygen is required."; return 1; }
  heading "Configure SFTP Restic repository"
- local host port user path ssh_dir key pub password_file repo sshcmd auth
+ local host port user base path server_name ssh_dir key pub password_file repo sshcmd auth
  read -r -p "SFTP host/IP: " host
  read -r -p "SSH port [22]: " port; port="${port:-22}"
  read -r -p "SSH user: " user
- read -r -p "Remote repository path [/backup/bitx-bk/$(hostname)]: " path
- path="${path:-/backup/bitx-bk/$(hostname)}"
+ read -r -p "Remote base path [/backup/bitx-bk]: " base
+ base="${base:-/backup/bitx-bk}"
+ server_name=$(hostname | tr -c 'A-Za-z0-9._-' '_' | sed 's/_$//')
+ path="${base%/}/$server_name"
+ info "Server folder: $path"
  [[ -n "$host" && -n "$user" ]] || { error "Host and user are required."; return 1; }
  [[ "$port" =~ ^[0-9]+$ ]] || { error "Invalid SSH port."; return 1; }
- [[ "$path" == /* ]] || { error "Remote repository path must be absolute."; return 1; }
+ [[ "$base" == /* ]] || { error "Remote base path must be absolute."; return 1; }
+ [[ -n "$server_name" ]] || { error "Could not determine a safe server folder name."; return 1; }
 
  ssh_dir="/etc/bitx-bk/ssh"; key="$ssh_dir/id_ed25519"; pub="$key.pub"
  mkdir -p "$ssh_dir"; chmod 700 "$ssh_dir"
