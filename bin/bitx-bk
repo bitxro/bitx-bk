@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.8.0"
+VERSION="0.8.1"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -775,7 +775,10 @@ case "$cmd" in
  discover) discover;;
  docker-audit) docker_audit;;
  virtualmin-audit) virtualmin_audit;;
- repo-config-local) configure_local_repo;;\n repo-config-onedrive) configure_onedrive_repo;;\n telegram-setup) telegram_setup;;\n telegram-test) telegram_send "bitx-bk | $(hostname)\\nTelegram test notification.";;
+ repo-config-local) configure_local_repo;;
+ repo-config-onedrive) configure_onedrive_repo;;
+ telegram-setup) telegram_setup;;
+ telegram-test) telegram_send "bitx-bk | $(hostname)\nTelegram test notification.";;
  repo-status) repository_status;;
  backup) backup "${1:-}";;
  snapshots) repo_cmd snapshots --tag bitx-bk;;
