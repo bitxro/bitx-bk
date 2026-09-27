@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.6.2"
+VERSION="0.6.3"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -336,7 +336,7 @@ backup_plan(){
 }
 
 collect_local_dependencies(){
- local stage="$1" list="$stage/system/local-dependencies.txt"
+ local stage="$1"\n local list="$stage/system/local-dependencies.txt"
  : > "$list"
 
  # Absolute paths referenced by cron definitions.
