@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.9.0"
+VERSION="0.9.1"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -325,7 +325,7 @@ configure_sftp_repo(){
  command -v ssh >/dev/null || { error "OpenSSH client is required."; return 1; }
  command -v ssh-keygen >/dev/null || { error "ssh-keygen is required."; return 1; }
  heading "Configure SFTP Restic repository"
- local host port user path ssh_dir key pub password_file repo sshcmd
+ local host port user path ssh_dir key pub password_file repo sshcmd auth
  read -r -p "SFTP host/IP: " host
  read -r -p "SSH port [22]: " port; port="${port:-22}"
  read -r -p "SSH user: " user
@@ -341,26 +341,41 @@ configure_sftp_repo(){
   ssh-keygen -q -t ed25519 -N "" -C "bitx-bk@$(hostname)" -f "$key" || return 1
   chmod 600 "$key"; chmod 644 "$pub"
   ok "Generated dedicated SSH key."
+ else
+  info "Using existing bitx-bk SSH key."
  fi
- say
- info "Install this public key on $user@$host:"
- say "------------------------------------------------------"
- cat "$pub"
- say "------------------------------------------------------"
- info "The first connection may ask you to verify the server host key."
- read -r -p "Press Enter after the public key has been authorized on the SFTP server..." _
 
- sshcmd="ssh -i $key -p $port -o IdentitiesOnly=yes"
- if ! ssh -i "$key" -p "$port" -o IdentitiesOnly=yes "$user@$host" "mkdir -p -- '$path' && test -d '$path'"; then
-  error "SSH/SFTP connection or remote directory setup failed."
+ say; heading "SFTP authentication"
+ say "  1) Install bitx-bk key using your SSH password"
+ say "  2) Key is already authorized on the server"
+ say "  0) Cancel"; say
+ read -r -p "Select: " auth
+ case "$auth" in
+  1)
+   command -v ssh-copy-id >/dev/null || { error "ssh-copy-id is required for automatic key installation."; return 1; }
+   info "Your SSH password will be requested by ssh-copy-id and is NOT stored by bitx-bk."
+   info "Verify the server fingerprint carefully if SSH asks on first connection."
+   ssh-copy-id -i "$pub" -p "$port" "$user@$host" || { error "Could not install the SSH key."; return 1; }
+   ;;
+  2)
+   info "Using the existing authorized key."
+   ;;
+  0) return;;
+  *) error "Invalid selection."; return 1;;
+ esac
+
+ sshcmd="ssh -i $key -p $port -o IdentitiesOnly=yes -o BatchMode=yes"
+ info "Testing passwordless SSH authentication..."
+ if ! ssh -i "$key" -p "$port" -o IdentitiesOnly=yes -o BatchMode=yes "$user@$host" "mkdir -p -- '$path' && test -d '$path'"; then
+  error "Key authentication or remote directory setup failed."
+  info "No SFTP repository settings were saved."
   return 1
  fi
- ok "SSH connection verified."
+ ok "Passwordless SSH connection verified."
 
  password_file=$(ensure_restic_password)
  repo="sftp:$user@$host:$path"
- export RESTIC_REPOSITORY="$repo" RESTIC_PASSWORD_FILE="$password_file"
- export RESTIC_SFTP_COMMAND="$sshcmd"
+ export RESTIC_REPOSITORY="$repo" RESTIC_PASSWORD_FILE="$password_file" RESTIC_SFTP_COMMAND="$sshcmd"
  if restic snapshots >/dev/null 2>&1; then
   ok "Existing Restic repository detected."
  else
