@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.11.0"
+VERSION="0.11.1"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -248,7 +248,7 @@ telegram_status(){
  unset TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID 2>/dev/null || true
 }
 
-notifications_audits_menu(){
+notifications_menu(){
  while true; do
   say
   heading "Audits & diagnostics"
