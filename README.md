@@ -4,7 +4,7 @@ Linux backup and disaster-recovery helper built around **restic**.
 
 > Early development release. Test recovery before relying on it in production.
 
-## v0.1.0 scope
+## Features
 
 - cron discovery, including referenced absolute-path scripts/executables
 - systemd service and timer inventory
@@ -19,38 +19,38 @@ Linux backup and disaster-recovery helper built around **restic**.
 ## Install
 
 ```bash
+mkdir -p /tmp/bitx-bk
+cd /tmp/bitx-bk
 git clone https://github.com/bitxro/bitx-bk.git
 cd bitx-bk
 sudo ./install.sh
+bitx-bk --version
 ```
 
-Then edit:
+The installer keeps a Git clone in `/opt/bitx-bk`, links `bitx-bk` into `/usr/local/bin`, and creates a config file if absent. It does not overwrite an existing installation or config. Install `restic` separately if needed.
+The `/tmp/bitx-bk` copy is only used for installation and can be removed afterward. All later updates run from `/opt/bitx-bk`.
+
+Configure the repository using the interactive menu (`bitx-bk` → Settings → Repository) or:
+
+```bash
+sudo bitx-bk repo-config-sftp
+# alternatively: sudo bitx-bk repo-config-local
+```
+
+The configuration is stored at:
 
 ```
 /etc/bitx-bk/bitx-bk.conf
 ```
 
-Create a root-readable restic password file, for example:
-
-```bash
-sudo install -m 600 /dev/null /root/.config/bitx-bk-restic-password
-sudo nano /root/.config/bitx-bk-restic-password
-```
-
-Set `RESTIC_REPOSITORY` and `RESTIC_PASSWORD_FILE` in the config.
-
-Initialize a new repository once:
-
-```bash
-sudo bitx-bk init
-```
+The repository setup creates a password file and initializes a new repository when needed. Keep the password and SFTP key available for disaster recovery.
 
 ## First safe test
 
 ```bash
 sudo bitx-bk doctor
 sudo bitx-bk discover
-sudo bitx-bk backup --dry-run
+sudo bitx-bk backup --plan
 ```
 
 If the report looks correct:
@@ -71,7 +71,14 @@ The staging directory is root-only and is removed after each run.
 
 bitx-bk stores Docker metadata plus persistent volume/bind-mount data. Compose files and associated `.env` files are discovered from Docker Compose labels when possible. Docker image export is optional because registry images can normally be pulled again.
 
-A full automated destructive recovery command is deliberately not enabled in v0.1.0. Recovery will be added after backup/discovery output has been tested on real systems.
+Recovery provides read-only snapshot inspection and audits. Automated restore is not enabled.
+
+## Updates
+
+```bash
+cd /opt/bitx-bk
+sudo ./deploy.sh
+```
 
 ## License
 
