@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.12.5"
+VERSION="0.12.6"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -931,11 +931,140 @@ settings_menu(){
  done
 }
 
+# All recovery views inspect repository metadata only. No restore command is invoked.
+recovery_snapshots(){
+ local json
+ command -v python3 >/dev/null || { error "python3 is required for Recovery"; return 1; }
+ json=$(repo_cmd snapshots --json --tag bitx-bk) || { error "Could not read snapshots"; return 1; }
+ [[ -n "$json" ]] || json='[]'
+ RECOVERY_SNAPSHOTS="$json" python3 - <<'PYJSON'
+import json, os
+try:
+    snapshots = json.loads(os.environ['RECOVERY_SNAPSHOTS'])
+    for i, item in enumerate(reversed(snapshots), 1):
+        print(f"  {i}) {item['short_id']}  {item.get('time', '?')}  {item.get('hostname', '?')}")
+        print("     Tags: " + ", ".join(item.get('tags', [])))
+    if not snapshots:
+        print("  No bitx-bk snapshots found.")
+except (ValueError, KeyError, TypeError) as exc:
+    raise SystemExit(f"Invalid snapshot metadata: {exc}")
+PYJSON
+}
+
+recovery_select(){
+ local json choice selected
+ command -v python3 >/dev/null || { error "python3 is required for Recovery"; return 1; }
+ json=$(repo_cmd snapshots --json --tag bitx-bk) || return 1
+ [[ -n "$json" ]] || json='[]'
+ RECOVERY_SNAPSHOTS="$json" python3 - <<'PYJSON' || return 1
+import json, os
+items = list(reversed(json.loads(os.environ['RECOVERY_SNAPSHOTS'])))
+for i, item in enumerate(items, 1):
+    print(f"  {i}) {item['short_id']}  {item.get('time', '?')}  {item.get('hostname', '?')}  {', '.join(item.get('tags', []))}")
+PYJSON
+ read -r -p "Select snapshot number (0 to cancel): " choice || return 1
+ [[ "$choice" == 0 ]] && return 1
+ [[ "$choice" =~ ^[1-9][0-9]*$ ]] || { warn "Invalid selection"; return 1; }
+ selected=$(RECOVERY_SNAPSHOTS="$json" python3 - "$choice" <<'PYJSON'
+import json, os, sys
+items = list(reversed(json.loads(os.environ['RECOVERY_SNAPSHOTS'])))
+i = int(sys.argv[1]) - 1
+if 0 <= i < len(items):
+    print(items[i]['id'])
+PYJSON
+ )
+ [[ -n "$selected" ]] || { warn "Snapshot number not found"; return 1; }
+ RECOVERY_SNAPSHOT="$selected"
+}
+
+recovery_inventory(){
+ local listing rc
+ listing=$(mktemp) || return 1
+ if ! repo_cmd ls --json "$RECOVERY_SNAPSHOT" > "$listing"; then
+  rm -f "$listing"; error "Could not inspect snapshot"; return 1
+ fi
+ python3 - "$RECOVERY_SNAPSHOT" "${1:-details}" "$listing" <<'PYJSON'
+import json, os, sys
+snapshot, mode, listing = sys.argv[1:]
+paths = {}
+for line in open(listing):
+    record = json.loads(line)
+    if record.get('struct_type') == 'node':
+        paths[record['path']] = record
+
+def present(prefix):
+    return any(path == prefix or path.startswith(prefix + '/') for path in paths)
+
+def show(label, prefix):
+    print(f"  [{'OK' if present(prefix) else 'INFO'}] {label}: {prefix}" + ('' if present(prefix) else ' (not in this snapshot)'))
+
+print(f"Snapshot: {snapshot}")
+if mode == 'docker':
+    projects = sorted({p.split('/')[3] for p in paths if p.startswith('/opt/docker/') and len(p.split('/')) > 3})
+    if not projects:
+        print('  No Docker projects in this snapshot.')
+    for name in projects:
+        base = '/opt/docker/' + name
+        print(f"  Project: {name}")
+        compose = [p for p in (base+'/compose.yaml', base+'/compose.yml', base+'/docker-compose.yml', base+'/docker-compose.yaml') if p in paths]
+        print('  [OK] Compose file: ' + compose[0] if compose else '  [WARN] Compose file not found')
+        show('Environment file', base+'/.env')
+    show('Docker metadata', '/var/lib/bitx-bk/staging/current/docker')
+elif mode == 'virtualmin':
+    prefix = '/var/lib/bitx-bk/staging/current/virtualmin/'
+    files = [n for p,n in paths.items() if p.startswith(prefix) and n.get('type') == 'file']
+    print(f"  Native Virtualmin backup files: {len(files)}")
+    print(f"  Total bytes: {sum(n.get('size', 0) for n in files)}")
+    if not files:
+        print('  [WARN] No Virtualmin archives in this snapshot.')
+else:
+    print('[SYSTEM]')
+    for label, path in (('Configuration','/etc/bitx-bk'), ('Secrets','/etc/secrets'), ('Scripts','/usr/local/bin'), ('Staging','/var/lib/bitx-bk/staging/current')):
+        show(label, path)
+    print('[DOCKER]')
+    projects = sorted({p.split('/')[3] for p in paths if p.startswith('/opt/docker/') and len(p.split('/')) > 3})
+    for name in projects: show('Project', '/opt/docker/'+name)
+    if not projects: print('  No Docker projects in this snapshot.')
+    print('[VIRTUALMIN]')
+    show('Native archives', '/var/lib/bitx-bk/staging/current/virtualmin')
+    if mode == 'plan':
+        print('Entries marked [OK] are present and could be selected for a future restore.')
+        print('No files changed. Recovery execution is not implemented.')
+PYJSON
+ rc=$?
+ rm -f "$listing"
+ return "$rc"
+}
+
 recovery_menu(){
- heading "Recovery / Disaster Recovery"
- info "Recovery workflow is not implemented yet."
- info "Backups can be inspected with Snapshots; automated restore/apply will be added after restore testing."
- pause
+ need_root
+ while true; do
+  say
+  heading "Recovery / Disaster Recovery"
+  say "  1) Snapshot browser"
+  say "  2) Snapshot details"
+  say "  3) Restore plan"
+  say "  4) Docker recovery audit"
+  say "  5) Virtualmin recovery audit"
+  say "  0) Back"
+  say
+  read -r -p "Select: " x || return
+  case "$x" in
+   1) recovery_snapshots; pause;;
+   2|3|4|5)
+    if recovery_select; then
+     case "$x" in
+      2) recovery_inventory details;;
+      3) recovery_inventory plan;;
+      4) recovery_inventory docker;;
+      5) recovery_inventory virtualmin;;
+     esac
+    fi
+    pause;;
+   0) return;;
+   *) warn "Invalid selection";;
+  esac
+ done
 }
 
 menu(){
