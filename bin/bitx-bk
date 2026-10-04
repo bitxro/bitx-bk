@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.12.6"
+VERSION="0.13.0"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -931,11 +931,125 @@ settings_menu(){
  done
 }
 
-# All recovery views inspect repository metadata only. No restore command is invoked.
+RECOVERY_CONFIG="${BITX_BK_RECOVERY_CONFIG:-/etc/bitx-bk/recovery.conf}"
+
+recovery_repo_cmd(){
+ (
+  need_root
+  command -v restic >/dev/null || die "restic missing"
+  [[ -r "$RECOVERY_CONFIG" ]] || die "Configure the Recovery repository first (Recovery -> 6)."
+  unset RESTIC_REPOSITORY RESTIC_PASSWORD RESTIC_PASSWORD_FILE RESTIC_PASSWORD_COMMAND RESTIC_SFTP_ARGS
+  source "$RECOVERY_CONFIG"
+  [[ -n "${RECOVERY_REPOSITORY:-}" && -r "${RECOVERY_PASSWORD_FILE:-}" ]] || die "Incomplete Recovery configuration"
+  export RESTIC_REPOSITORY="$RECOVERY_REPOSITORY" RESTIC_PASSWORD_FILE="$RECOVERY_PASSWORD_FILE"
+  case "${1:-}" in snapshots|ls|restore|dump|stats) ;; *) die "Command not allowed in Recovery";; esac
+  restic --no-lock -o "sftp.args=$RECOVERY_SFTP_ARGS" "$@"
+ )
+}
+
+recovery_configure(){
+ need_root
+ local host port user path auth password key sshargs tmp secret
+ for c in ssh-keygen ssh restic; do command -v "$c" >/dev/null || { error "$c missing"; return 1; }; done
+ heading "Connect to an EXISTING Recovery repository"
+ read -r -p "SFTP host/IP: " host || return 1
+ read -r -p "SSH port [22]: " port || return 1; port="${port:-22}"
+ read -r -p "SSH user: " user || return 1
+ read -r -p "Exact absolute repository path (including source server folder): " path || return 1
+ [[ "$host" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ && "$user" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] || { error "Invalid host or user (use a hostname or IPv4 address)"; return 1; }
+ [[ "$port" =~ ^[0-9]{1,5}$ ]] && ((10#$port > 0 && 10#$port <= 65535)) || { error "Invalid port"; return 1; }
+ [[ "$path" == /* && "$path" != *$'\n'* && "$path" != *$'\r'* ]] || { error "Use an absolute repository path"; return 1; }
+ mkdir -p /etc/bitx-bk/recovery/ssh; chmod 700 /etc/bitx-bk/recovery /etc/bitx-bk/recovery/ssh
+ key=/etc/bitx-bk/recovery/ssh/id_ed25519
+ if [[ ! -e "$key" ]]; then
+  ssh-keygen -q -t ed25519 -N "" -C "bitx-bk-recovery@$(hostname)" -f "$key" || return 1
+ fi
+ chmod 600 "$key"
+ ssh-keygen -y -f "$key" > "$key.pub" || return 1
+ info "Dedicated Recovery public key:"
+ cat "$key.pub"
+ say "  1) Authorize key using SSH password (ssh-copy-id)"
+ say "  2) Key already authorized / authorize it manually"
+ say "  0) Cancel"
+ read -r -p "Select: " auth || return 1
+ case "$auth" in
+  1) command -v ssh-copy-id >/dev/null || { error "ssh-copy-id missing"; return 1; }
+     ssh-copy-id -i "$key.pub" -p "$port" "$user@$host" || return 1;;
+  2) info "The public key must be authorized before continuing";;
+  *) return 1;;
+ esac
+ info "Check the SSH host fingerprint if prompted. The storage account may be restricted to read-only SFTP."
+ read -r -s -p "Original Restic password: " password || return 1; say
+ [[ -n "$password" ]] || { error "Password required"; return 1; }
+ secret=$(mktemp /etc/bitx-bk/recovery/password.XXXXXX) || return 1
+ chmod 600 "$secret"; printf '%s\n' "$password" > "$secret"; unset password
+ sshargs="-i $key -p $port -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=ask"
+ if ! (unset RESTIC_PASSWORD RESTIC_PASSWORD_COMMAND; export RESTIC_REPOSITORY="sftp:$user@$host:$path" RESTIC_PASSWORD_FILE="$secret"; restic --no-lock -o "sftp.args=$sshargs" snapshots >/dev/null); then
+  rm -f "$secret"; error "Connection/decryption failed; previous Recovery settings preserved. No repository initialized."; return 1
+ fi
+ tmp=$(mktemp "${RECOVERY_CONFIG}.XXXXXX") || { rm -f "$secret"; return 1; }
+ { printf 'RECOVERY_REPOSITORY=%q\n' "sftp:$user@$host:$path"; printf 'RECOVERY_PASSWORD_FILE=%q\n' "$secret"; printf 'RECOVERY_SFTP_ARGS=%q\n' "$sshargs"; } > "$tmp"
+ chmod 600 "$tmp"; mv "$tmp" "$RECOVERY_CONFIG"
+ ok "Existing Recovery repository verified. Backup configuration unchanged."
+}
+
+recovery_restore(){
+ recovery_select || return 1
+ local listing choices selection resource target parent answer rc
+ listing=$(mktemp); choices=$(mktemp)
+ if ! recovery_repo_cmd ls --json "$RECOVERY_SNAPSHOT" > "$listing"; then rm -f "$listing" "$choices"; return 1; fi
+ if ! python3 - "$listing" > "$choices" <<'PYRES'
+import json, sys
+roots = set()
+for line in open(sys.argv[1]):
+    n = json.loads(line)
+    if n.get('struct_type') == 'snapshot':
+        roots.update(n.get('paths', []))
+    elif n.get('struct_type') == 'node':
+        p = n['path']
+        if p.startswith('/opt/docker/') and len(p.split('/')) == 4:
+            roots.add(p)
+        if p == '/var/lib/bitx-bk/staging/current/virtualmin':
+            roots.add(p)
+for p in sorted(roots):
+    if p.startswith('/') and '\n' not in p and '\r' not in p:
+        print(p)
+PYRES
+ then rm -f "$listing" "$choices"; return 1; fi
+ if [[ ! -s "$choices" ]]; then error "No selectable roots in snapshot"; rm -f "$listing" "$choices"; return 1; fi
+ local -a resources=(); mapfile -t resources < "$choices"
+ local i; for i in "${!resources[@]}"; do printf '  %s) %s\n' "$((i+1))" "${resources[i]}"; done
+ read -r -p "Resource number (0 to cancel): " selection || selection=0
+ [[ "$selection" =~ ^[1-9][0-9]{0,5}$ ]] && ((selection<=${#resources[@]})) || { rm -f "$listing" "$choices"; return 1; }
+ resource="${resources[selection-1]}"; rm -f "$listing" "$choices"
+ if [[ "$resource" == *'*'* || "$resource" == *'?'* || "$resource" == *'['* || "$resource" == *']'* ]]; then
+  error "Resource path contains unsupported pattern characters"; return 1
+ fi
+ warn "Only data present in this snapshot can be restored. External Docker volumes and local images may be absent in older backups."
+ read -r -p "NEW absolute destination directory: " target || return 1
+ [[ "$target" == /* && "$target" != / && "$target" != *$'\n'* && "$target" != *$'\r'* ]] || { error "Invalid destination"; return 1; }
+ parent=$(dirname "$target")
+ [[ -d "$parent" && ! -e "$target" && ! -L "$target" ]] || { error "Parent must exist and destination must not exist"; return 1; }
+ info "Snapshot: $RECOVERY_SNAPSHOT"
+ info "Resource: $resource"
+ info "Destination: $target (original directory hierarchy preserved)"
+ read -r -p "Type RESTORE to proceed: " answer || return 1
+ [[ "$answer" == RESTORE ]] || { info "Cancelled"; return 1; }
+ mkdir -m 700 -- "$target" || return 1
+ if recovery_repo_cmd restore "$RECOVERY_SNAPSHOT" --target "$target" --include "$resource" --verify; then
+  ok "Restore verified: ${target%/}$resource"
+  info "No service started and no existing application overwritten."
+  info "Review Compose, bind mounts, volumes, image availability, ports and architecture before deployment."
+ else
+  rc=$?; error "Restore failed (exit $rc); partial files kept in $target for inspection"; return "$rc"
+ fi
+}
+
+# Recovery always reads its own repository; restore writes only to a new local target.
 recovery_snapshots(){
  local json
  command -v python3 >/dev/null || { error "python3 is required for Recovery"; return 1; }
- json=$(repo_cmd snapshots --json --tag bitx-bk) || { error "Could not read snapshots"; return 1; }
+ json=$(recovery_repo_cmd snapshots --json) || { error "Could not read snapshots"; return 1; }
  [[ -n "$json" ]] || json='[]'
  RECOVERY_SNAPSHOTS="$json" python3 - <<'PYJSON'
 import json, os
@@ -954,7 +1068,7 @@ PYJSON
 recovery_select(){
  local json choice selected
  command -v python3 >/dev/null || { error "python3 is required for Recovery"; return 1; }
- json=$(repo_cmd snapshots --json --tag bitx-bk) || return 1
+ json=$(recovery_repo_cmd snapshots --json) || return 1
  [[ -n "$json" ]] || json='[]'
  RECOVERY_SNAPSHOTS="$json" python3 - <<'PYJSON' || return 1
 import json, os
@@ -980,7 +1094,7 @@ PYJSON
 recovery_inventory(){
  local listing rc
  listing=$(mktemp) || return 1
- if ! repo_cmd ls --json "$RECOVERY_SNAPSHOT" > "$listing"; then
+ if ! recovery_repo_cmd ls --json "$RECOVERY_SNAPSHOT" > "$listing"; then
   rm -f "$listing"; error "Could not inspect snapshot"; return 1
  fi
  python3 - "$RECOVERY_SNAPSHOT" "${1:-details}" "$listing" <<'PYJSON'
@@ -1029,7 +1143,7 @@ else:
     show('Native archives', '/var/lib/bitx-bk/staging/current/virtualmin')
     if mode == 'plan':
         print('Entries marked [OK] are present and could be selected for a future restore.')
-        print('No files changed. Recovery execution is not implemented.')
+        print('No files changed. Use Recovery option 7 to restore a selected resource into a new directory.')
 PYJSON
  rc=$?
  rm -f "$listing"
@@ -1046,10 +1160,14 @@ recovery_menu(){
   say "  3) Restore plan"
   say "  4) Docker recovery audit"
   say "  5) Virtualmin recovery audit"
+  say "  6) Connect existing SFTP repository (read-only)"
+  say "  7) Restore selected resource to new directory"
   say "  0) Back"
   say
   read -r -p "Select: " x || return
   case "$x" in
+   6) recovery_configure; pause;;
+   7) recovery_restore; pause;;
    1) recovery_snapshots; pause;;
    2|3|4|5)
     if recovery_select; then
@@ -1103,6 +1221,7 @@ bitx-bk v$VERSION
 Usage: bitx-bk [command]
 No command opens the interactive menu.
 Commands: doctor, discover, docker-audit, virtualmin-audit, repo-config-local, repo-config-sftp, repo-status, telegram-setup, telegram-test, backup --plan, backup, snapshots, check
+Recovery commands: recovery-config-sftp, recovery-snapshots, recovery-restore
 Colors: COLOR=auto|always|never (default auto); NO_COLOR disables colors in auto mode.
 EOF
 }
@@ -1123,6 +1242,9 @@ case "$cmd" in
  backup) backup "${1:-}";;
  snapshots) repo_cmd snapshots --tag bitx-bk;;
  check) repo_cmd check;;
+ recovery-config-sftp) recovery_configure;;
+ recovery-snapshots) recovery_snapshots;;
+ recovery-restore) recovery_restore;;
  version|--version|-V) echo "$VERSION";;
  help|--help|-h) usage;;
  *) usage; exit 2;;
