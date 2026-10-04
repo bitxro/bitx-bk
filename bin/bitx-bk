@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.14.0"
+VERSION="0.14.1"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -1299,6 +1299,26 @@ recovery_menu(){
  done
 }
 
+app_update(){
+ need_root
+ local script project_root
+ command -v git >/dev/null || { error "git is required for updates"; return 1; }
+ script=$(readlink -f "${BASH_SOURCE[0]}") || { error "Could not locate bitx-bk"; return 1; }
+ project_root=$(dirname "$(dirname "$script")")
+ [[ -d "$project_root/.git" && -f "$project_root/deploy.sh" ]] || {
+  error "Updates require a Git installation with deploy.sh (normally /opt/bitx-bk)."
+  return 1
+ }
+ if ! bash "$project_root/deploy.sh"; then
+  error "Update failed. Review the deployment output above."
+  return 1
+ fi
+ if [[ "${1:-}" == restart ]]; then
+  info "Reloading the application..."
+  exec bash "$script"
+ fi
+}
+
 menu(){
  need_root
  while true; do
@@ -1313,6 +1333,7 @@ menu(){
   say "  4) Recovery"
   say "  5) Audits & diagnostics"
   say "  6) Settings"
+  say "  7) Update application"
   say "  0) Exit"
   say
   read -r -p "Select: " choice
@@ -1323,6 +1344,7 @@ menu(){
    4) recovery_menu;;
    5) audits_menu;;
    6) settings_menu;;
+   7) app_update restart || true; pause;;
    0) return;;
    *) warn "Invalid selection"; sleep 1;;
   esac
@@ -1334,7 +1356,7 @@ usage(){
 bitx-bk v$VERSION
 Usage: bitx-bk [command]
 No command opens the interactive menu.
-Commands: doctor, discover, docker-audit, virtualmin-audit, repo-config-local, repo-config-sftp, repo-status, telegram-setup, telegram-test, backup --plan, backup, snapshots, check
+Commands: doctor, discover, docker-audit, virtualmin-audit, repo-config-local, repo-config-sftp, repo-status, telegram-setup, telegram-test, backup --plan, backup, snapshots, check, update
 Recovery commands: recovery-config-sftp, recovery-snapshots, recovery-restore, recovery-doctor
 Colors: COLOR=auto|always|never (default auto); NO_COLOR disables colors in auto mode.
 EOF
@@ -1356,6 +1378,7 @@ case "$cmd" in
  backup) backup "${1:-}";;
  snapshots) repo_cmd snapshots --tag bitx-bk;;
  check) repo_cmd check;;
+ update) app_update;;
  recovery-doctor) recovery_tools;;
  recovery-config-sftp) recovery_configure;;
  recovery-snapshots) recovery_snapshots;;
