@@ -87,6 +87,10 @@ Restic restores only the selected path and runs `--verify`. On failure, the comm
 
 ## Updates
 
+Choose **7) Update application** in the main menu. It runs `deploy.sh`, checks for local changes, fetches the current branch and applies only a fast-forward update. After success, the menu reloads the updated application. Failed updates report the error without closing the menu.
+
+From the command line, use `sudo bitx-bk update`, or:
+
 ```bash
 cd /opt/bitx-bk
 sudo ./deploy.sh
