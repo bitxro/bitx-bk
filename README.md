@@ -95,3 +95,27 @@ sudo ./deploy.sh
 ## License
 
 GPL-3.0
+
+### Recovery requirements (v0.14.0)
+
+Recovery checks local access tools at entry and before restoring. Option 8 or
+`sudo bitx-bk recovery-doctor` reruns this check without needing backup configuration.
+Missing required tools stop restoration; the report suggests explicit installation
+commands. Nothing is installed automatically.
+
+After resource selection, and again after verified recovery, a report checks Docker
+Engine/Compose/daemon or Virtualmin/Webmin and relevant service commands. Missing
+application runtimes do not block file recovery. Virtualmin services are candidates:
+the archived domain features must be reviewed to decide which are actually required.
+No recovered configuration is executed and no service is started.
+
+The report reads source OS, architecture and package inventory from the selected
+snapshot using read-only Restic dump. Inventory absent from old or project-only
+snapshots is explicitly UNKNOWN; it is never replaced by information from a
+different snapshot. New system backups include OS metadata and corrected Debian
+package inventory. Full package lists are evidence, not an automatic install plan.
+Exact PHP extensions, database compatibility, external volumes, local images and
+resource-specific service requirements still require review when metadata is
+insufficient. Free destination space is displayed before restoration, but this is
+not a guaranteed capacity estimate. Native Virtualmin domain restoration remains
+a separate manual operation after recovering the archives.

@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.13.0"
+VERSION="0.14.0"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -610,7 +610,8 @@ collect_and_backup(){
 
  if [[ "${BACKUP_SYSTEM_INFO:-yes}" == yes ]]; then
   uname -a > "$stage/system/uname.txt"
-  { command -v dpkg >/dev/null && dpkg-query -W -f='\${binary:Package}\t\${Version}\n'; } > "$stage/system/packages.txt" 2>/dev/null || true
+  [[ ! -r /etc/os-release ]] || cp /etc/os-release "$stage/system/os-release"
+  { command -v dpkg >/dev/null && dpkg-query -W -f='${binary:Package}\t${Version}\n'; } > "$stage/system/packages.txt" 2>/dev/null || true
   ip -details addr show > "$stage/system/ip-addresses.txt" 2>/dev/null || true
   ip route show table all > "$stage/system/routes.txt" 2>/dev/null || true
   ok "System inventory collected"
@@ -933,6 +934,110 @@ settings_menu(){
 
 RECOVERY_CONFIG="${BITX_BK_RECOVERY_CONFIG:-/etc/bitx-bk/recovery.conf}"
 
+
+# Checks never install packages or execute recovered configuration.
+recovery_tools(){
+ local c missing=0
+ heading "Recovery access requirements"
+ for c in restic ssh ssh-keygen python3 mktemp mkdir dirname df uname sed find; do
+  if command -v "$c" >/dev/null; then ok "$c available"
+  else error "$c missing (required for Recovery)"; missing=1; fi
+ done
+ if ((missing)); then
+  info "Debian/Ubuntu: apt-get update && apt-get install restic openssh-client python3 coreutils"
+  info "Other distributions: install equivalent packages using the native package manager."
+  info "Install explicitly, then rerun the check. No package installed automatically."
+ fi
+ return "$missing"
+}
+
+recovery_requirements(){
+ local resource="$1" target="${2:-}" c metadata file
+ heading "Selected resource requirements: $resource"
+ info "Destination architecture: $(uname -m)"
+ if [[ -r /etc/os-release ]]; then
+  # Display as text; never source snapshot content.
+  sed -n '/^PRETTY_NAME=/p' /etc/os-release
+ fi
+ if [[ -n "${RECOVERY_SNAPSHOT:-}" ]]; then
+  for file in os-release uname.txt packages.txt; do
+   if metadata=$(recovery_repo_cmd dump "$RECOVERY_SNAPSHOT" "/var/lib/bitx-bk/staging/current/system/$file" 2>/dev/null); then
+    if [[ -n "$metadata" ]]; then
+     info "Source inventory: $file"
+     if [[ "$file" == packages.txt ]]; then
+      SOURCE_PACKAGES="$metadata" python3 - "$resource" <<'PYPACKAGES'
+import os, re, subprocess, sys
+resource = sys.argv[1]
+if resource.startswith('/opt/docker'):
+    pattern = r'^(docker|containerd|runc)'
+elif '/virtualmin' in resource:
+    pattern = r'^(webmin|virtualmin|apache|httpd|nginx|php|mariadb|mysql|postgresql|postfix|dovecot|bind9)'
+else:
+    pattern = r'.'
+rows = []
+for line in os.environ['SOURCE_PACKAGES'].splitlines():
+    parts = line.split()
+    if len(parts) == 2 and re.match(pattern, parts[0]):
+        rows.append(parts)
+if not rows:
+    print('UNKNOWN: no usable relevant package records in this snapshot')
+for package, version in rows:
+    try:
+        result = subprocess.run(['dpkg-query', '-W', '-f=${Status}\t${Version}', package],
+                                text=True, capture_output=True, check=False)
+        status, local = result.stdout.rsplit('\t', 1) if '\t' in result.stdout else ('', '')
+        local = local if result.returncode == 0 and status == 'install ok installed' else 'MISSING'
+    except FileNotFoundError:
+        local = 'UNKNOWN (destination is not dpkg-based)'
+    state = 'SAME' if version == local else ('MISSING' if local == 'MISSING' else 'REVIEW')
+    print(f'[{state}] {package}: source={version}; destination={local}')
+PYPACKAGES
+     else
+      printf '%s\n' "$metadata"
+     fi
+    else warn "UNKNOWN: source $file inventory empty"; fi
+   else warn "UNKNOWN: source $file inventory absent from selected snapshot"; fi
+  done
+  warn "Source package inventory is evidence, not an installation list. Exact application requirements/version compatibility still need review."
+ fi
+ case "$resource" in
+  /opt/docker|/opt/docker/*)
+   if command -v docker >/dev/null; then
+    docker --version || true
+    docker compose version >/dev/null 2>&1 && ok "Docker Compose plugin available" || warn "MISSING: Docker Compose plugin (needed for Compose deployments)"
+    docker info >/dev/null 2>&1 && ok "Docker daemon accessible" || warn "NOT READY: Docker daemon unavailable or access denied"
+   else
+    warn "MISSING: Docker Engine and Docker Compose plugin for application startup"
+   fi
+   info "Install Engine and Compose for your distribution using Docker's official installation instructions."
+   warn "Check image architecture/availability, external volumes, bind paths, secrets and host ports. Image software runs inside containers; do not install all source host packages."
+   if [[ -n "$target" ]]; then
+    info "Recovered Compose files (not executed):"
+    find "${target%/}$resource" -type f \( -name compose.yml -o -name compose.yaml -o -name docker-compose.yml -o -name docker-compose.yaml \) -print
+   fi
+   ;;
+  /var/lib/bitx-bk/staging/current/virtualmin*)
+   command -v virtualmin >/dev/null && ok "Virtualmin CLI available" || warn "MISSING: Virtualmin CLI for native domain restoration"
+   [[ -d /etc/webmin ]] && ok "Webmin configuration present" || warn "MISSING: Webmin configuration"
+   for c in apache2 httpd nginx php mariadb mysql psql postfix dovecot named; do
+    command -v "$c" >/dev/null && ok "$c detected" || info "$c absent; required only if the archived domain uses it"
+   done
+   warn "UNKNOWN until native archives/features are reviewed: required web stack, PHP versions/extensions, database engine/version, mail and DNS."
+   info "Install a compatible Virtualmin stack using its supported installer on a supported OS; do not install competing web/database stacks blindly."
+   warn "Native Virtualmin restore-domain is a separate manual step. Recovered archives do not mean functional websites."
+   ;;
+  *)
+   warn "UNKNOWN: resource-specific runtime requirements. Review source inventory and recovered configuration for systemd/cron, VPN and database dependencies."
+   ;;
+ esac
+ info "File recovery does not require application runtimes. Missing runtimes prevent deployment, not copying data."
+ if [[ -n "$target" ]]; then
+  df -Pk -- "$target"
+  warn "Before startup: review versions, permissions, secrets, network configuration and occupied ports. No service started."
+ fi
+ return 0
+}
+
 recovery_repo_cmd(){
  (
   need_root
@@ -949,6 +1054,7 @@ recovery_repo_cmd(){
 
 recovery_configure(){
  need_root
+ recovery_tools || return 1
  local host port user path auth password key sshargs tmp secret
  for c in ssh-keygen ssh restic; do command -v "$c" >/dev/null || { error "$c missing"; return 1; }; done
  heading "Connect to an EXISTING Recovery repository"
@@ -994,6 +1100,7 @@ recovery_configure(){
 }
 
 recovery_restore(){
+ recovery_tools || return 1
  recovery_select || return 1
  local listing choices selection resource target parent answer rc
  listing=$(mktemp); choices=$(mktemp)
@@ -1022,6 +1129,7 @@ PYRES
  read -r -p "Resource number (0 to cancel): " selection || selection=0
  [[ "$selection" =~ ^[1-9][0-9]{0,5}$ ]] && ((selection<=${#resources[@]})) || { rm -f "$listing" "$choices"; return 1; }
  resource="${resources[selection-1]}"; rm -f "$listing" "$choices"
+ recovery_requirements "$resource"
  if [[ "$resource" == *'*'* || "$resource" == *'?'* || "$resource" == *'['* || "$resource" == *']'* ]]; then
   error "Resource path contains unsupported pattern characters"; return 1
  fi
@@ -1030,6 +1138,8 @@ PYRES
  [[ "$target" == /* && "$target" != / && "$target" != *$'\n'* && "$target" != *$'\r'* ]] || { error "Invalid destination"; return 1; }
  parent=$(dirname "$target")
  [[ -d "$parent" && ! -e "$target" && ! -L "$target" ]] || { error "Parent must exist and destination must not exist"; return 1; }
+ df -Pk -- "$parent"
+ warn "Allow space for restored data and runtime images/databases; displayed free space is not a guaranteed size estimate."
  info "Snapshot: $RECOVERY_SNAPSHOT"
  info "Resource: $resource"
  info "Destination: $target (original directory hierarchy preserved)"
@@ -1038,6 +1148,7 @@ PYRES
  mkdir -m 700 -- "$target" || return 1
  if recovery_repo_cmd restore "$RECOVERY_SNAPSHOT" --target "$target" --include "$resource" --verify; then
   ok "Restore verified: ${target%/}$resource"
+  recovery_requirements "$resource" "$target"
   info "No service started and no existing application overwritten."
   info "Review Compose, bind mounts, volumes, image availability, ports and architecture before deployment."
  else
@@ -1152,6 +1263,7 @@ PYJSON
 
 recovery_menu(){
  need_root
+ recovery_tools || true
  while true; do
   say
   heading "Recovery / Disaster Recovery"
@@ -1162,10 +1274,12 @@ recovery_menu(){
   say "  5) Virtualmin recovery audit"
   say "  6) Connect existing SFTP repository (read-only)"
   say "  7) Restore selected resource to new directory"
+  say "  8) Check local Recovery requirements"
   say "  0) Back"
   say
   read -r -p "Select: " x || return
   case "$x" in
+   8) recovery_tools || true; pause;;
    6) recovery_configure; pause;;
    7) recovery_restore; pause;;
    1) recovery_snapshots; pause;;
@@ -1221,7 +1335,7 @@ bitx-bk v$VERSION
 Usage: bitx-bk [command]
 No command opens the interactive menu.
 Commands: doctor, discover, docker-audit, virtualmin-audit, repo-config-local, repo-config-sftp, repo-status, telegram-setup, telegram-test, backup --plan, backup, snapshots, check
-Recovery commands: recovery-config-sftp, recovery-snapshots, recovery-restore
+Recovery commands: recovery-config-sftp, recovery-snapshots, recovery-restore, recovery-doctor
 Colors: COLOR=auto|always|never (default auto); NO_COLOR disables colors in auto mode.
 EOF
 }
@@ -1242,6 +1356,7 @@ case "$cmd" in
  backup) backup "${1:-}";;
  snapshots) repo_cmd snapshots --tag bitx-bk;;
  check) repo_cmd check;;
+ recovery-doctor) recovery_tools;;
  recovery-config-sftp) recovery_configure;;
  recovery-snapshots) recovery_snapshots;;
  recovery-restore) recovery_restore;;
