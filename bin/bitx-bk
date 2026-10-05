@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.14.4"
+VERSION="0.14.5"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -83,6 +83,19 @@ docker_audit(){
     ((named+=1)); info "volume: $vol -> $dst"
    fi
   done < <(docker inspect -f '{{range .Mounts}}{{println .Type "|" .Source "|" .Destination "|" .Name}}{{end}}' "$c" | sed 's/ | /|/g')
+
+  local data_manifest data_group path
+  local -a PROJECT_DATA_SOURCES=() PROJECT_DATA_RUNNING=()
+  data_manifest=$(mktemp) || return 1
+  data_group="$wd"
+  [[ -n "$wd" && "$wd" != "<no value>" ]] || data_group="container:$c"
+  if docker_project_data "$data_group" "$data_manifest"; then
+   for path in "${PROJECT_DATA_SOURCES[@]}"; do ok "New backup data source: $path"; done
+   info "Current collector coverage verified; this does not validate older snapshots."
+  else
+   error "Persistent storage cannot be fully captured for $name"; missing=1
+  fi
+  rm -f "$data_manifest"
 
   if ((missing==0)); then
    ok "discovery: COMPLETE"
@@ -498,6 +511,11 @@ backup_plan(){
    done < <(docker ps -a -q))
 
   mapfile -t projects < <(docker ps -a -q | xargs -r docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' 2>/dev/null | grep -vE '^$|^<no value>$' | sort -u)
+  while IFS= read -r container_id; do
+   local project_directory
+   project_directory=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$container_id") || return 1
+   [[ -n "$project_directory" && "$project_directory" != "<no value>" ]] || projects+=("container:$container_id")
+  done < <(docker ps -a -q)
  fi
 
  if [[ -s "$plan_stage/system/local-dependencies-resolved.txt" ]]; then mapfile -t deps < "$plan_stage/system/local-dependencies-resolved.txt"; fi
@@ -533,6 +551,18 @@ backup_plan(){
  say; heading "[FINAL BACKUP SOURCES]"
  info "/var/lib/bitx-bk/staging/current (system metadata, manifests and DB dumps)"
  for p in "${final[@]}"; do [[ -e "$p" ]] && ok "$p" || warn "missing: $p"; done
+ if ((${#projects[@]})); then
+  say; heading "[DOCKER PERSISTENT DATA]"
+  local -a PROJECT_DATA_SOURCES=() PROJECT_DATA_RUNNING=()
+  for p in "${projects[@]}"; do
+   if ! docker_project_data "$p" "$plan_stage/docker-data.json"; then
+    rm -rf "$plan_stage"; error "Persistent data discovery failed; backup cannot proceed safely."; return 1
+   fi
+   local dependency
+   for dependency in "${PROJECT_DATA_SOURCES[@]}"; do ok "$dependency"; done
+   info "Containers to stop for $p (including shared consumers): ${#PROJECT_DATA_RUNNING[@]}"
+  done
+ fi
  rm -rf "$plan_stage"
 
  say
@@ -587,6 +617,22 @@ collect_local_dependencies(){
   : > "$stage/system/local-dependencies-resolved.txt"
   info "No additional local cron/systemd dependencies discovered"
  fi
+}
+
+docker_project_data(){
+ local project="$1" manifest="$2" inventory helper ids
+ command -v python3 >/dev/null || { error "python3 required for persistent Docker data backup"; return 1; }
+ helper="$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")/lib/docker_project_data.py"
+ [[ -r "$helper" ]] || { error "Missing Docker data collector: $helper"; return 1; }
+ ids=$(docker ps -a -q) || return 1
+ local -a all_ids=(); mapfile -t all_ids <<< "$ids"
+ [[ -n "$ids" ]] || { error "No containers available for project discovery"; return 1; }
+ inventory=$(mktemp) || return 1
+ if ! docker inspect "${all_ids[@]}" > "$inventory"; then rm -f "$inventory"; return 1; fi
+ if ! python3 "$helper" "$project" "$inventory" "$manifest"; then rm -f "$inventory"; return 1; fi
+ rm -f "$inventory"
+ mapfile -t PROJECT_DATA_SOURCES < <(python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["sources"]))' "$manifest" | sed '/^$/d')
+ mapfile -t PROJECT_DATA_RUNNING < <(python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["running_consumers"]))' "$manifest" | sed '/^$/d')
 }
 
 collect_and_backup(){
@@ -667,7 +713,7 @@ collect_and_backup(){
   fi
  fi
 
- local -a sources=()
+ local -a sources=() compose_project_paths=() standalone_groups=()
  [[ -d /etc/bitx-bk ]] && sources+=("/etc/bitx-bk")
  [[ -d /etc/secrets ]] && sources+=("/etc/secrets")
  if [[ -s "$stage/system/local-dependencies-resolved.txt" ]]; then
@@ -685,7 +731,13 @@ collect_and_backup(){
    image=$(docker inspect -f '{{.Config.Image}}' "$id")
    wd=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$id" 2>/dev/null || true)
    docker inspect "$id" > "$stage/docker/inspect/$name.json"
-   if [[ -n "$wd" && "$wd" != "<no value>" && -e "$wd" ]]; then sources+=("$wd"); fi
+   if [[ -n "$wd" && "$wd" != "<no value>" ]]; then
+    [[ -d "$wd" ]] || { error "Compose directory missing: $wd"; return 1; }
+    sources+=("$wd"); compose_project_paths+=("$wd")
+   else
+    standalone_groups+=("container:$id")
+    warn "Standalone container $name: attached persistent mounts will be captured; writable container layer is not backed up."
+   fi
 
    case "${image,,}" in
     *mariadb*|*mysql*)
@@ -755,11 +807,26 @@ EOF
  local -a docker_projects=() non_docker_sources=()
  local p
 
+ docker_projects=("${compose_project_paths[@]}" "${standalone_groups[@]}")
  for p in "${sources[@]}"; do
-  case "$p" in /opt/docker/*) docker_projects+=("$p");; *) non_docker_sources+=("$p");; esac
+  local is_project=no known
+  for known in "${compose_project_paths[@]}"; do [[ "$p" != "$known" ]] || is_project=yes; done
+  [[ "$is_project" == yes ]] || non_docker_sources+=("$p")
  done
- mapfile -t docker_projects < <(printf '%s\n' "${docker_projects[@]}" | sort -u)
+ mapfile -t docker_projects < <(printf '%s\n' "${docker_projects[@]}" | sed '/^$/d' | sort -u)
  mapfile -t non_docker_sources < <(printf '%s\n' "${non_docker_sources[@]}" | grep '^/' | sort -u)
+
+ # Fail before creating snapshots if persistent project storage cannot be captured.
+ mkdir -p "$stage/docker/project-data"
+ local -a PROJECT_DATA_SOURCES=() PROJECT_DATA_RUNNING=()
+ local -A data_manifests=()
+ local manifest_index=0
+ for p in "${docker_projects[@]}"; do
+  [[ -n "$p" ]] || continue
+  ((manifest_index+=1))
+  data_manifests["$p"]="$stage/docker/project-data/$manifest_index.json"
+  docker_project_data "$p" "${data_manifests[$p]}" || return 1
+ done
 
  # Any container stopped by this run is recorded here so EXIT/INT/TERM can recover it.
  local recovery_file="$stage/docker/stopped-by-bitx-bk"
@@ -787,23 +854,17 @@ EOF
 
  local project
  for project in "${docker_projects[@]}"; do
-  [[ -d "$project" ]] || { warn "Docker project path missing: $project"; continue; }
-  local -a project_ids=() project_running=()
-  while IFS= read -r id; do [[ -n "$id" ]] && project_ids+=("$id"); done < <(
-   docker ps -a -q | while IFS= read -r id; do
-    wd=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$id" 2>/dev/null || true)
-    [[ "$wd" == "$project" ]] && printf '%s\n' "$id"
-   done
-  )
-  for id in "${project_ids[@]}"; do
-   [[ "$(docker inspect -f '{{.State.Running}}' "$id" 2>/dev/null)" == true ]] && project_running+=("$id")
-  done
+  [[ "$project" == container:* || -d "$project" ]] || { error "Docker project path missing: $project"; return 1; }
+  docker_project_data "$project" "${data_manifests[$project]}" || return 1
+  local -a project_running=("${PROJECT_DATA_RUNNING[@]}")
+  local -a project_sources=("${PROJECT_DATA_SOURCES[@]}" "$stage/system" "${data_manifests[$project]}")
 
   say
   heading "Docker project: $project"
+  for p in "${PROJECT_DATA_SOURCES[@]}"; do ok "Persistent data source: $p"; done
   if (("${#project_running[@]}" > 0)); then
    printf '%s\n' "${project_running[@]}" > "$recovery_file"
-   info "Stopping ${#project_running[@]} running container(s)..."
+   info "Stopping ${#project_running[@]} running container(s), including shared data consumers..."
    if ! docker stop "${project_running[@]}" >/dev/null; then
     error "Could not stop project cleanly: $project"
     _bitx_bk_restart_stopped
@@ -813,7 +874,7 @@ EOF
   fi
 
   set +e
-  repo_cmd backup --tag bitx-bk --tag "host:$host" --tag "$run_id" --tag "scope:docker" --tag "project:$(basename "$project")" "$project"
+  repo_cmd backup --tag bitx-bk --tag "host:$host" --tag "$run_id" --tag "scope:docker" --tag "project:$(basename "$project")" "${project_sources[@]}"
   backup_rc=$?
   set -e
 
