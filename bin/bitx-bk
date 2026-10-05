@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.14.5"
+VERSION="0.14.6"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -1000,7 +1000,7 @@ RECOVERY_CONFIG="${BITX_BK_RECOVERY_CONFIG:-/etc/bitx-bk/recovery.conf}"
 recovery_tools(){
  local c missing=0
  heading "Recovery access requirements"
- for c in restic ssh ssh-keygen python3 mktemp mkdir dirname df uname sed find realpath mv; do
+ for c in restic ssh ssh-keygen python3 mktemp mkdir dirname df uname sed find realpath mv cp; do
   if command -v "$c" >/dev/null; then ok "$c available"
   else error "$c missing (required for Recovery)"; missing=1; fi
  done
@@ -1443,6 +1443,56 @@ PYNETWORKS
  info "Networks prepared. No containers started. Run docker compose up -d from $project when ready."
 }
 
+recovery_docker_restore_all(){
+ need_root
+ recovery_tools || return 1
+ command -v docker >/dev/null || { error "Docker is required to register recovered volumes"; return 1; }
+ docker info >/dev/null 2>&1 || { error "Docker daemon unavailable"; return 1; }
+ recovery_select || return 1
+ local listing manifest metadata helper answer target rc
+ helper="$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")/lib/docker_restore_bundle.py"
+ [[ -r "$helper" ]] || { error "Docker bundle recovery helper missing"; return 1; }
+ listing=$(mktemp) || return 1
+ metadata=$(mktemp) || { rm -f "$listing"; return 1; }
+ if ! recovery_repo_cmd ls --json "$RECOVERY_SNAPSHOT" > "$listing"; then rm -f "$listing" "$metadata"; return 1; fi
+ if ! manifest=$(python3 - "$listing" <<'PYBUNDLE'
+import json, re, sys
+paths = set()
+for line in open(sys.argv[1]):
+    row = json.loads(line)
+    candidates = row.get('paths', []) if row.get('struct_type') == 'snapshot' else [row.get('path', '')]
+    for path in candidates:
+        if re.fullmatch(r'/var/lib/bitx-bk/staging/current/docker/project-data/[0-9]+\.json', path):
+            paths.add(path)
+if len(paths) != 1:
+    raise SystemExit('Select one Docker data snapshot made with v0.14.5 or later; exactly one project manifest is required.')
+print(next(iter(paths)))
+PYBUNDLE
+ ); then rm -f "$listing" "$metadata"; return 1; fi
+ if ! recovery_repo_cmd dump "$RECOVERY_SNAPSHOT" "$manifest" > "$metadata"; then rm -f "$listing" "$metadata"; return 1; fi
+ if ! python3 "$helper" plan "$metadata" "$listing"; then rm -f "$listing" "$metadata"; return 1; fi
+ rm -f "$listing"
+ warn "This restores all project paths and named local volume data. Existing different files or nonempty volumes are refused. No containers started."
+ read -r -p "Type RESTORE to recover the complete Docker snapshot: " answer || { rm -f "$metadata"; return 1; }
+ [[ "$answer" == RESTORE ]] || { rm -f "$metadata"; info "Cancelled"; return 1; }
+ mkdir -p /var/lib/bitx-bk/recovery || { rm -f "$metadata"; return 1; }
+ chmod 700 /var/lib/bitx-bk/recovery
+ target=$(mktemp -d /var/lib/bitx-bk/recovery/docker-restore.XXXXXX) || { rm -f "$metadata"; return 1; }
+ mv -- "$metadata" "$target/bundle-manifest.json" || return 1
+ info "Verified recovery staging: $target"
+ if ! recovery_repo_cmd restore "$RECOVERY_SNAPSHOT" --target "$target" --verify; then
+  error "Restore/verification failed; no project data deployed. Partial files retained in $target"; return 1
+ fi
+ # Deployment runs only after Restic verifies the entire snapshot.
+ if python3 "$helper" apply "$target/bundle-manifest.json" "$target"; then
+  ok "Complete Docker data recovery finished. No containers started."
+  info "Source inventory and manifests retained in $target"
+  info "Use Recovery -> 9 to prepare external networks, then review Compose before startup."
+ else
+  rc=$?; error "Deployment stopped (exit $rc). Verified files retained in $target; any data already copied is retained for inspection."; return "$rc"
+ fi
+}
+
 recovery_menu(){
  need_root
  recovery_tools || true
@@ -1458,10 +1508,12 @@ recovery_menu(){
   say "  7) Restore selected resource (original path or new directory)"
   say "  8) Check local Recovery requirements"
   say "  9) Prepare external Docker networks for recovered project"
+  say "  10) Restore complete Docker snapshot (project + volumes + bind mounts)"
   say "  0) Back"
   say
   read -r -p "Select: " x || return
   case "$x" in
+   10) recovery_menu_action recovery_docker_restore_all; pause;;
    9) recovery_menu_action recovery_docker_networks; pause;;
    8) recovery_menu_action recovery_tools; pause;;
    6) recovery_menu_action recovery_configure; pause;;
@@ -1541,7 +1593,7 @@ bitx-bk v$VERSION
 Usage: bitx-bk [command]
 No command opens the interactive menu.
 Commands: doctor, discover, docker-audit, virtualmin-audit, repo-config-local, repo-config-sftp, repo-status, telegram-setup, telegram-test, backup --plan, backup, snapshots, check, update
-Recovery commands: recovery-config-sftp, recovery-snapshots, recovery-restore, recovery-doctor
+Recovery commands: recovery-config-sftp, recovery-snapshots, recovery-restore, recovery-docker-restore, recovery-doctor
 Colors: COLOR=auto|always|never (default auto); NO_COLOR disables colors in auto mode.
 EOF
 }
@@ -1567,6 +1619,7 @@ case "$cmd" in
  recovery-config-sftp) recovery_configure;;
  recovery-snapshots) recovery_snapshots;;
  recovery-restore) recovery_restore;;
+ recovery-docker-restore) recovery_docker_restore_all;;
  version|--version|-V) echo "$VERSION";;
  help|--help|-h) usage;;
  *) usage; exit 2;;

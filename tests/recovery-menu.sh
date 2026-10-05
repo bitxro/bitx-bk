@@ -9,6 +9,7 @@ recovery_tools(){ return 0; }
 recovery_configure(){ error 'Connection/decryption failed'; return 1; }
 recovery_restore(){ return 1; }
 recovery_snapshots(){ return 1; }
+recovery_docker_restore_all(){ return 1; }
 recovery_select(){ RECOVERY_SNAPSHOT=fixture; return 0; }
 recovery_inventory(){ [[ "$RECOVERY_SNAPSHOT" == fixture ]]; return 1; }
 
@@ -28,10 +29,12 @@ recovery_menu > "$work/menu" 2>&1 <<'INPUT'
 
 5
 
+10
+
 0
 INPUT
-[[ $(grep -c '^Recovery / Disaster Recovery$' "$work/menu") == 8 ]]
-[[ $(grep -c 'Returning to Recovery menu' "$work/menu") == 7 ]]
+[[ $(grep -c '^Recovery / Disaster Recovery$' "$work/menu") == 9 ]]
+[[ $(grep -c 'Returning to Recovery menu' "$work/menu") == 8 ]]
 grep -q 'Connection/decryption failed' "$work/menu"
 [[ $- == *e* ]]
 
