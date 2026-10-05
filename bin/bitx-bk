@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.14.3"
+VERSION="0.14.4"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -1189,6 +1189,7 @@ PYRES
   recovery_requirements "$resource" "$target"
   info "No service started and no existing application overwritten."
   info "Review Compose, bind mounts, volumes, image availability, ports and architecture before deployment."
+  case "$resource" in /opt/docker/*) info "Use Recovery -> 9 to prepare missing external Docker networks in $destination.";; esac
  else
   rc=$?; error "Restore failed (exit $rc); partial files kept in $target for inspection"; return "$rc"
  fi
@@ -1312,6 +1313,75 @@ recovery_menu_action(){
  return 0
 }
 
+recovery_docker_networks(){
+ need_root
+ local project="${1:-}" config networks name static answer
+ local -a missing=()
+ command -v docker >/dev/null && command -v python3 >/dev/null || { error "Docker and python3 are required"; return 1; }
+ docker compose version >/dev/null 2>&1 || { error "Docker Compose plugin is required"; return 1; }
+ docker info >/dev/null 2>&1 || { error "Docker daemon is unavailable"; return 1; }
+ if [[ -z "$project" ]]; then read -r -p "Recovered Compose project directory: " project || return 1; fi
+ [[ "$project" == /* && -d "$project" ]] || { error "Use an existing absolute project directory"; return 1; }
+ # Do not discover Compose files in ancestor directories or inherited projects.
+ local compose
+ for compose in compose.yaml compose.yml docker-compose.yml docker-compose.yaml; do
+  [[ ! -f "$project/$compose" ]] || break
+ done
+ [[ -f "$project/$compose" ]] || { error "No Compose file in $project"; return 1; }
+ config=$(mktemp) || return 1
+ if ! (cd -- "$project" && unset COMPOSE_FILE COMPOSE_PROJECT_NAME && docker compose config --format json) > "$config"; then
+  rm -f "$config"; error "Compose configuration invalid; no networks created"; return 1
+ fi
+ if ! networks=$(python3 - "$config" <<'PYNETWORKS'
+import json, re, sys
+data = json.load(open(sys.argv[1]))
+result = {}
+for key, value in data.get('networks', {}).items():
+    if not value.get('external'):
+        continue
+    name = value.get('name', key)
+    if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', name):
+        raise SystemExit('Invalid external network name')
+    static = any(
+        isinstance(service.get('networks'), dict)
+        and isinstance(service['networks'].get(key), dict)
+        and any(service['networks'][key].get(ip) for ip in ('ipv4_address', 'ipv6_address'))
+        for service in data.get('services', {}).values()
+    )
+    result[name] = result.get(name, False) or static
+for name, static in sorted(result.items()):
+    print(name + '\t' + ('yes' if static else 'no'))
+PYNETWORKS
+ ); then
+  rm -f "$config"; error "Could not read external networks; no networks created"; return 1
+ fi
+ rm -f "$config"
+ [[ -n "$networks" ]] || { info "No external networks required by this Compose project"; return 0; }
+ while IFS=$'\t' read -r name static; do
+  if docker network inspect "$name" >/dev/null 2>&1; then
+   ok "External network already exists: $name"
+  elif [[ "$static" == yes ]]; then
+   error "$name requires static container addresses; restore its original subnet/IPAM configuration manually. No networks created."; return 1
+  else
+   missing+=("$name"); info "Missing external network: $name"
+  fi
+ done <<< "$networks"
+ ((${#missing[@]})) || { ok "All external networks already exist"; return 0; }
+ warn "Compose external networks do not specify their original driver/subnet. This creates default bridge networks with Docker-assigned subnets; existing networks stay unchanged."
+ read -r -p "Create all missing networks as default bridge networks? [y/N]: " answer || return 1
+ case "$answer" in y|Y|yes|YES) ;; *) info "Cancelled; no networks created"; return 0;; esac
+ for name in "${missing[@]}"; do
+  if docker network inspect "$name" >/dev/null 2>&1; then
+   ok "External network already exists: $name"
+  elif docker network create --driver bridge "$name" >/dev/null; then
+   ok "Created external network: $name"
+  else
+   error "Could not create $name; networks already created were retained"; return 1
+  fi
+ done
+ info "Networks prepared. No containers started. Run docker compose up -d from $project when ready."
+}
+
 recovery_menu(){
  need_root
  recovery_tools || true
@@ -1326,10 +1396,12 @@ recovery_menu(){
   say "  6) Connect existing SFTP repository (read-only)"
   say "  7) Restore selected resource (original path or new directory)"
   say "  8) Check local Recovery requirements"
+  say "  9) Prepare external Docker networks for recovered project"
   say "  0) Back"
   say
   read -r -p "Select: " x || return
   case "$x" in
+   9) recovery_menu_action recovery_docker_networks; pause;;
    8) recovery_menu_action recovery_tools; pause;;
    6) recovery_menu_action recovery_configure; pause;;
    7) recovery_menu_action recovery_restore; pause;;

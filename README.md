@@ -88,6 +88,8 @@ Use options 1-5 to list snapshots, inspect data and audit it. Recovery lists all
 
 Both modes require typing `RESTORE`. Existing destinations are refused; no services start automatically.
 
+**9) Prepare external Docker networks for recovered project** reads the resolved Compose configuration in an existing project directory (for example `/opt/docker/nginx`). It lists external networks, reuses existing networks and, after confirmation, creates all missing ones as default bridge networks with Docker-assigned subnets. This includes custom/interpolated network names; Compose-managed networks remain Compose's responsibility. Docker Engine, Compose and Python 3 must already be installed. External network declarations do not contain the original driver/subnet: this option is a default bridge fallback, not a restoration of the source network configuration. Missing networks used with static container addresses are refused and require their original subnet/IPAM settings. No containers are started; afterward run `docker compose up -d` in the project directory.
+
 Restic restores only the selected path and runs `--verify`. On failure, the command reports failure and retains partial files for inspection. A successful file verification does not prove application/database consistency. Restore does not install Docker, import databases, deploy applications, load images or start services. Review Compose files, external volumes, local images, permissions, architecture and port conflicts before manually deploying a restored project. For complete Docker migration, missing external dependencies must be backed up separately. Native Virtualmin archives can be recovered here and subsequently imported using Virtualmin's native restore workflow.
 
 ## Updates
