@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.14.2"
+VERSION="0.14.3"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -939,7 +939,7 @@ RECOVERY_CONFIG="${BITX_BK_RECOVERY_CONFIG:-/etc/bitx-bk/recovery.conf}"
 recovery_tools(){
  local c missing=0
  heading "Recovery access requirements"
- for c in restic ssh ssh-keygen python3 mktemp mkdir dirname df uname sed find; do
+ for c in restic ssh ssh-keygen python3 mktemp mkdir dirname df uname sed find realpath mv; do
   if command -v "$c" >/dev/null; then ok "$c available"
   else error "$c missing (required for Recovery)"; missing=1; fi
  done
@@ -1102,7 +1102,7 @@ recovery_configure(){
 recovery_restore(){
  recovery_tools || return 1
  recovery_select || return 1
- local listing choices selection resource target parent answer rc
+ local listing choices selection resource target parent answer rc mode destination stage
  listing=$(mktemp); choices=$(mktemp)
  if ! recovery_repo_cmd ls --json "$RECOVERY_SNAPSHOT" > "$listing"; then rm -f "$listing" "$choices"; return 1; fi
  if ! python3 - "$listing" > "$choices" <<'PYRES'
@@ -1134,20 +1134,58 @@ PYRES
   error "Resource path contains unsupported pattern characters"; return 1
  fi
  warn "Only data present in this snapshot can be restored. External Docker volumes and local images may be absent in older backups."
- read -r -p "NEW absolute destination directory: " target || return 1
- [[ "$target" == /* && "$target" != / && "$target" != *$'\n'* && "$target" != *$'\r'* ]] || { error "Invalid destination"; return 1; }
- parent=$(dirname "$target")
- [[ -d "$parent" && ! -e "$target" && ! -L "$target" ]] || { error "Parent must exist and destination must not exist"; return 1; }
+ say "  1) Restore to original path: $resource (must not exist)"
+ say "  2) Restore to a new directory (preserve original hierarchy)"
+ say "  0) Cancel"
+ read -r -p "Destination mode [1]: " mode || return 1
+ mode="${mode:-1}"
+ case "$mode" in
+  1)
+   [[ "$resource" != / && "$(realpath -m -- "$resource")" == "$resource" ]] || { error "Original path must be canonical and must not traverse symlinks"; return 1; }
+   [[ ! -e "$resource" && ! -L "$resource" ]] || { error "Original destination already exists; nothing overwritten. Use a new directory to inspect the backup."; return 1; }
+   destination="$resource"
+   parent=$(dirname "$resource")
+   while [[ ! -e "$parent" && ! -L "$parent" ]]; do parent=$(dirname "$parent"); done
+   [[ -d "$parent" ]] || { error "Original path parent is not a directory"; return 1; }
+   ;;
+  2)
+   read -r -p "NEW absolute destination directory: " target || return 1
+   [[ "$target" == /* && "$target" != / && "$target" != *$'\n'* && "$target" != *$'\r'* ]] || { error "Invalid destination"; return 1; }
+   parent=$(dirname "$target")
+   [[ -d "$parent" && ! -e "$target" && ! -L "$target" ]] || { error "Parent must exist and destination must not exist"; return 1; }
+   destination="${target%/}$resource"
+   ;;
+  0) info "Cancelled"; return 1;;
+  *) error "Invalid destination mode"; return 1;;
+ esac
  df -Pk -- "$parent"
  warn "Allow space for restored data and runtime images/databases; displayed free space is not a guaranteed size estimate."
  info "Snapshot: $RECOVERY_SNAPSHOT"
  info "Resource: $resource"
- info "Destination: $target (original directory hierarchy preserved)"
+ info "Destination: $destination"
  read -r -p "Type RESTORE to proceed: " answer || return 1
  [[ "$answer" == RESTORE ]] || { info "Cancelled"; return 1; }
- mkdir -m 700 -- "$target" || return 1
+ if [[ "$mode" == 1 ]]; then
+  target=$(mktemp -d "$parent/.bitx-bk-restore.XXXXXX") || return 1
+ else
+  mkdir -m 700 -- "$target" || return 1
+ fi
  if recovery_repo_cmd restore "$RECOVERY_SNAPSHOT" --target "$target" --include "$resource" --verify; then
-  ok "Restore verified: ${target%/}$resource"
+  if [[ "$mode" == 1 ]]; then
+   stage="${target%/}$resource"
+   # Verify again after restoration; never replace an existing destination.
+   if [[ "$(realpath -m -- "$resource")" != "$resource" || -e "$resource" || -L "$resource" ]]; then
+    error "Original destination changed or now exists; verified files kept in $target"; return 1
+   fi
+   [[ -e "$stage" || -L "$stage" ]] || { error "Selected resource missing after restore; files kept in $target"; return 1; }
+   mkdir -p -- "$(dirname "$resource")" || { error "Cannot create parent; files kept in $target"; return 1; }
+   mv -T -n -- "$stage" "$resource" || { error "Cannot move resource; files kept in $target"; return 1; }
+   [[ ! -e "$stage" && ! -L "$stage" ]] || { error "Destination already exists; verified files kept in $target"; return 1; }
+   # The temporary hierarchy is empty now; remove empty directories only.
+   find "$target" -depth -type d -empty -delete
+   target=/
+  fi
+  ok "Restore verified: $destination"
   recovery_requirements "$resource" "$target"
   info "No service started and no existing application overwritten."
   info "Review Compose, bind mounts, volumes, image availability, ports and architecture before deployment."
@@ -1156,7 +1194,7 @@ PYRES
  fi
 }
 
-# Recovery always reads its own repository; restore writes only to a new local target.
+# Recovery reads its own repository; existing destinations are never overwritten.
 recovery_snapshots(){
  local json
  command -v python3 >/dev/null || { error "python3 is required for Recovery"; return 1; }
@@ -1254,7 +1292,7 @@ else:
     show('Native archives', '/var/lib/bitx-bk/staging/current/virtualmin')
     if mode == 'plan':
         print('Entries marked [OK] are present and could be selected for a future restore.')
-        print('No files changed. Use Recovery option 7 to restore a selected resource into a new directory.')
+        print('No files changed. Use Recovery option 7 to restore a selected resource to its original path or a new directory.')
 PYJSON
  rc=$?
  rm -f "$listing"
@@ -1286,7 +1324,7 @@ recovery_menu(){
   say "  4) Docker recovery audit"
   say "  5) Virtualmin recovery audit"
   say "  6) Connect existing SFTP repository (read-only)"
-  say "  7) Restore selected resource to new directory"
+  say "  7) Restore selected resource (original path or new directory)"
   say "  8) Check local Recovery requirements"
   say "  0) Back"
   say

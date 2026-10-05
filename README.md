@@ -81,7 +81,12 @@ Enter the **original Restic encryption password**, not the SSH login password. A
 
 All Recovery repository commands use `--no-lock`. Use a storage account restricted to read-only repository permissions to enforce this at the server. Do not run concurrent `prune`, deletion or repository maintenance while a restore is reading without a lock.
 
-Use options 1-5 to list snapshots, inspect data and audit it. Recovery lists all snapshots, including snapshots without bitx-bk tags. **7) Restore selected resource to new directory** (or `sudo bitx-bk recovery-restore`) lets you choose a snapshot and an available root, Docker project or Virtualmin archive directory. Provide a new absolute local destination whose parent already exists, then type `RESTORE`. Existing destination directories are refused. Original path hierarchy is preserved: restoring `/opt/docker/app` into `/srv/recovery-test` produces `/srv/recovery-test/opt/docker/app`.
+Use options 1-5 to list snapshots, inspect data and audit it. Recovery lists all snapshots, including snapshots without bitx-bk tags. **7) Restore selected resource (original path or new directory)** (or `sudo bitx-bk recovery-restore`) lets you choose a snapshot and an available root, Docker project or Virtualmin archive directory, then choose a destination mode:
+
+- **1) Original path (default):** `/opt/docker/nginx` is recovered directly to `/opt/docker/nginx`. The destination must not exist, and its path must not traverse symlinks. Missing parent directories are created after confirmation. Data is first restored and verified in a temporary directory, then moved to the original path without replacing existing data. Failed restores retain their temporary files for inspection.
+- **2) New directory:** provide a new absolute local destination whose parent already exists. Original hierarchy is preserved: restoring `/opt/docker/app` into `/srv/recovery-test` produces `/srv/recovery-test/opt/docker/app`.
+
+Both modes require typing `RESTORE`. Existing destinations are refused; no services start automatically.
 
 Restic restores only the selected path and runs `--verify`. On failure, the command reports failure and retains partial files for inspection. A successful file verification does not prove application/database consistency. Restore does not install Docker, import databases, deploy applications, load images or start services. Review Compose files, external volumes, local images, permissions, architecture and port conflicts before manually deploying a restored project. For complete Docker migration, missing external dependencies must be backed up separately. Native Virtualmin archives can be recovered here and subsequently imported using Virtualmin's native restore workflow.
 
