@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.14.1"
+VERSION="0.14.2"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -1261,6 +1261,19 @@ PYJSON
  return "$rc"
 }
 
+# Isolate each action so failures (including die) return to the interactive
+# menu, while retaining errexit inside the action and for CLI commands.
+recovery_menu_action(){
+ set +e
+ (set -e; "$@")
+ local rc=$?
+ set -e
+ if ((rc != 0)); then
+  info "Recovery action ended (exit $rc). Returning to Recovery menu."
+ fi
+ return 0
+}
+
 recovery_menu(){
  need_root
  recovery_tools || true
@@ -1279,17 +1292,17 @@ recovery_menu(){
   say
   read -r -p "Select: " x || return
   case "$x" in
-   8) recovery_tools || true; pause;;
-   6) recovery_configure; pause;;
-   7) recovery_restore; pause;;
-   1) recovery_snapshots; pause;;
+   8) recovery_menu_action recovery_tools; pause;;
+   6) recovery_menu_action recovery_configure; pause;;
+   7) recovery_menu_action recovery_restore; pause;;
+   1) recovery_menu_action recovery_snapshots; pause;;
    2|3|4|5)
     if recovery_select; then
      case "$x" in
-      2) recovery_inventory details;;
-      3) recovery_inventory plan;;
-      4) recovery_inventory docker;;
-      5) recovery_inventory virtualmin;;
+      2) recovery_menu_action recovery_inventory details;;
+      3) recovery_menu_action recovery_inventory plan;;
+      4) recovery_menu_action recovery_inventory docker;;
+      5) recovery_menu_action recovery_inventory virtualmin;;
      esac
     fi
     pause;;
