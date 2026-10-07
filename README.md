@@ -65,6 +65,11 @@ bitx-bk cron schedule before enabling this timer to avoid duplicate runs.
 and timer, preserving configuration, snapshots and an in-progress backup.
 Manually created units with the same names are left untouched.
 
+Snapshot lists use the same grouped layout in the main menu, repository
+status, backup completion, CLI and Recovery. Each backup run has a separate
+heading, and each snapshot shows its ID, local time, scope, project and paths.
+Recovery selection numbers refer to the displayed snapshot IDs.
+
 ## First safe test
 
 ```bash

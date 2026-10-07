@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.14.8"
+VERSION="0.14.9"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -408,7 +408,7 @@ repository_status(){
  heading "Restic Repository"
  info "repository: $RESTIC_REPOSITORY"
  [[ -n "${RESTIC_PASSWORD_FILE:-}" ]] && info "password file: $RESTIC_PASSWORD_FILE"
- if repo_cmd snapshots; then ok "repository accessible"; else error "repository check failed"; return 1; fi
+ if snapshots_list; then ok "repository accessible"; else error "repository check failed"; return 1; fi
 }
 
 
@@ -477,6 +477,32 @@ repository_check_action(){
  if ((rc != 0)); then
   info "Repository check ended (exit $rc). Returning to menu."
  fi
+ return 0
+}
+
+snapshots_render(){
+ command -v python3 >/dev/null || { error "python3 is required to display snapshots."; return 1; }
+ local helper
+ helper="$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")/lib/snapshot_list.py"
+ python3 "$helper" "$1" "$BOLD$CYAN" "$RESET" "${2:-oldest}"
+}
+
+snapshots_list(){
+ local listing rc
+ listing=$(mktemp) || return 1
+ if (repo_cmd snapshots --json "$@") > "$listing"; then
+  if snapshots_render "$listing"; then rc=0; else rc=$?; fi
+ else rc=$?; fi
+ rm -f "$listing"
+ return "$rc"
+}
+
+snapshots_menu_action(){
+ set +e
+ (set -e; snapshots_list --tag bitx-bk)
+ local rc=$?
+ set -e
+ if ((rc != 0)); then info "Snapshot listing ended (exit $rc). Returning to menu."; fi
  return 0
 }
 
@@ -914,7 +940,7 @@ EOF
  rm -rf "$stage"
  ok "Backup run completed successfully."
  info "Run tag: $run_id"
- repo_cmd snapshots --tag "$run_id" || true
+ snapshots_list --tag "$run_id" || true
 }
 
 backup(){
@@ -1435,18 +1461,7 @@ recovery_snapshots(){
  command -v python3 >/dev/null || { error "python3 is required for Recovery"; return 1; }
  json=$(recovery_repo_cmd snapshots --json) || { error "Could not read snapshots"; return 1; }
  [[ -n "$json" ]] || json='[]'
- RECOVERY_SNAPSHOTS="$json" python3 - <<'PYJSON'
-import json, os
-try:
-    snapshots = json.loads(os.environ['RECOVERY_SNAPSHOTS'])
-    for i, item in enumerate(reversed(snapshots), 1):
-        print(f"  {i}) {item['short_id']}  {item.get('time', '?')}  {item.get('hostname', '?')}")
-        print("     Tags: " + ", ".join(item.get('tags', [])))
-    if not snapshots:
-        print("  No bitx-bk snapshots found.")
-except (ValueError, KeyError, TypeError) as exc:
-    raise SystemExit(f"Invalid snapshot metadata: {exc}")
-PYJSON
+ printf '%s\n' "$json" | snapshots_render - newest
 }
 
 recovery_select(){
@@ -1454,12 +1469,7 @@ recovery_select(){
  command -v python3 >/dev/null || { error "python3 is required for Recovery"; return 1; }
  json=$(recovery_repo_cmd snapshots --json) || return 1
  [[ -n "$json" ]] || json='[]'
- RECOVERY_SNAPSHOTS="$json" python3 - <<'PYJSON' || return 1
-import json, os
-items = list(reversed(json.loads(os.environ['RECOVERY_SNAPSHOTS'])))
-for i, item in enumerate(items, 1):
-    print(f"  {i}) {item['short_id']}  {item.get('time', '?')}  {item.get('hostname', '?')}  {', '.join(item.get('tags', []))}")
-PYJSON
+ printf '%s\n' "$json" | snapshots_render - newest || return 1
  read -r -p "Select snapshot number (0 to cancel): " choice || return 1
  [[ "$choice" == 0 ]] && return 1
  [[ "$choice" =~ ^[1-9][0-9]*$ ]] || { warn "Invalid selection"; return 1; }
@@ -1749,7 +1759,7 @@ menu(){
   case "$choice" in
    1) backup; pause;;
    2) backup --plan; pause;;
-   3) repo_cmd snapshots --tag bitx-bk; pause;;
+   3) snapshots_menu_action; pause;;
    4) recovery_menu;;
    5) audits_menu;;
    6) settings_menu;;
@@ -1785,7 +1795,7 @@ case "$cmd" in
  telegram-test) telegram_send "bitx-bk | $(hostname)\nTelegram test notification.";;
  repo-status) repository_status;;
  backup) backup "${1:-}";;
- snapshots) repo_cmd snapshots --tag bitx-bk;;
+ snapshots) snapshots_list --tag bitx-bk;;
  check) repo_cmd check;;
  update) app_update;;
  recovery-doctor) recovery_tools;;
