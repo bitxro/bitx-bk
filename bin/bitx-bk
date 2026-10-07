@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.14.7"
+VERSION="0.14.8"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -994,12 +994,172 @@ settings_menu(){
   heading "Settings"
   say "  1) Backup repository"
   say "  2) Notifications"
+  say "  3) Automatic backup / service"
   say "  0) Back"
   say
   read -r -p "Select: " x
   case "$x" in
    1) repository_menu;;
    2) notifications_menu;;
+   3) schedule_menu;;
+   0) return;;
+   *) warn "Invalid selection";;
+  esac
+ done
+}
+
+schedule_unit_dir(){ printf '/etc/systemd/system\n'; }
+schedule_installed(){ [[ -x /usr/local/bin/bitx-bk ]]; }
+
+schedule_owned_units(){
+ local dir="$1" unit
+ for unit in bitx-bk.service bitx-bk.timer; do
+  if [[ -e "$dir/$unit" ]] && ! grep -qx '# Managed by bitx-bk' "$dir/$unit"; then
+   error "Refusing to replace or remove an unmanaged unit: $dir/$unit"; return 1
+  fi
+ done
+}
+
+schedule_parse_times(){
+ local input="$1" item normalized
+ local -a items=()
+ local -A seen=()
+ SCHEDULE_TIMES=()
+ [[ -n "$input" && "$input" != ,* && "$input" != *, && "$input" != *,,* ]] || return 1
+ IFS=',' read -r -a items <<< "$input"
+ for item in "${items[@]}"; do
+  item="${item//[[:space:]]/}"
+  if [[ "$item" =~ ^([01]?[0-9]|2[0-3])(:([0-5][0-9]))?$ ]]; then
+   printf -v normalized '%02d:%02d' "$((10#${BASH_REMATCH[1]}))" "$((10#${BASH_REMATCH[3]:-00}))"
+  else return 1; fi
+  if [[ -z "${seen[$normalized]:-}" ]]; then
+   SCHEDULE_TIMES+=("$normalized"); seen[$normalized]=yes
+  fi
+ done
+ (( ${#SCHEDULE_TIMES[@]} > 0 ))
+}
+
+schedule_require(){
+ need_root
+ command -v systemctl >/dev/null || die "systemd is required for automatic backups."
+ [[ -d /run/systemd/system ]] || die "systemd is not running on this server."
+}
+
+schedule_status(){
+ schedule_require
+ heading "Automatic backup"
+ info "Server time: $(date '+%Y-%m-%d %H:%M:%S %Z (%z)')"
+ if systemctl is-enabled --quiet bitx-bk.timer; then
+  ok "Daily backup enabled"
+ else
+  info "Daily backup disabled"
+ fi
+ systemctl list-timers --all --no-pager bitx-bk.timer
+ systemctl show bitx-bk.service -p ActiveState -p Result -p ExecMainStatus --no-pager
+}
+
+schedule_configure(){
+ schedule_require
+ local times time dir config_escaped
+ local -a SCHEDULE_TIMES=()
+ read -r -p "Daily backup times (e.g. 10,12,18,00 or 10:30,18:45; server timezone): " times || return 1
+ schedule_parse_times "$times" || {
+  error "Use hours 0-23 or HH:MM separated by commas."; return 1;
+ }
+ restic_env || die "Configure a Restic repository first."
+ command -v restic >/dev/null || die "restic missing"
+ repo_cmd snapshots >/dev/null || die "Restic repository is not accessible."
+ schedule_installed || die "Install bitx-bk before enabling the service."
+ [[ "$CONFIG" == /* && "$CONFIG" != *$'\n'* && "$CONFIG" != *$'\r'* ]] || die "Invalid configuration path."
+ config_escaped=${CONFIG//\\/\\\\}
+ config_escaped=${config_escaped//\"/\\\"}
+ config_escaped=${config_escaped//%/%%}
+ dir=$(schedule_unit_dir)
+ schedule_owned_units "$dir" || return 1
+ # Stop only the timer; an in-progress backup is allowed to complete.
+ if [[ -f "$dir/bitx-bk.timer" ]]; then systemctl stop bitx-bk.timer; fi
+ cat > "$dir/bitx-bk.service" <<EOF
+# Managed by bitx-bk
+[Unit]
+Description=bitx-bk daily backup
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+Environment="BITX_BK_CONFIG=$config_escaped"
+ExecStart=/usr/local/bin/bitx-bk backup
+TimeoutStartSec=infinity
+StandardOutput=journal
+StandardError=journal
+EOF
+ cat > "$dir/bitx-bk.timer" <<EOF
+# Managed by bitx-bk
+[Unit]
+Description=bitx-bk scheduled backups
+
+[Timer]
+EOF
+ for time in "${SCHEDULE_TIMES[@]}"; do
+  printf 'OnCalendar=*-*-* %s:00\n' "$time" >> "$dir/bitx-bk.timer"
+ done
+ cat >> "$dir/bitx-bk.timer" <<EOF
+Persistent=false
+Unit=bitx-bk.service
+
+[Install]
+WantedBy=timers.target
+EOF
+ chmod 644 "$dir/bitx-bk.service" "$dir/bitx-bk.timer"
+ systemctl daemon-reload
+ systemctl enable --now bitx-bk.timer
+ ok "Backups enabled at ${SCHEDULE_TIMES[*]} (server timezone: $(date +%Z))."
+ info "Missed backups are skipped; the next run is at the scheduled time."
+ schedule_status
+}
+
+schedule_remove(){
+ schedule_require
+ local dir
+ dir=$(schedule_unit_dir)
+ schedule_owned_units "$dir" || return 1
+ if [[ ! -f "$dir/bitx-bk.timer" && ! -f "$dir/bitx-bk.service" ]]; then
+  info "Automatic backup service is not installed."; return;
+ fi
+ systemctl disable --now bitx-bk.timer
+ rm -f "$dir/bitx-bk.timer" "$dir/bitx-bk.service"
+ systemctl daemon-reload
+ ok "Automatic backup service and timer removed."
+ info "An in-progress backup can finish. Repository data and configuration are preserved."
+}
+
+schedule_action(){
+ set +e
+ (set -e; "$@")
+ local rc=$?
+ set -e
+ if ((rc != 0)); then info "Action ended (exit $rc). Returning to automatic backup menu."; fi
+ return 0
+}
+
+schedule_menu(){
+ local x
+ while true; do
+  say
+  heading "Automatic backup / service"
+  say "  1) Add service / set backup times"
+  say "  2) Remove service / disable automatic backups"
+  say "  3) Status / next backup"
+  say "  4) Recent backup service logs"
+  say "  0) Back"
+  read -r -p "Select: " x || return
+  case "$x" in
+   1) schedule_action schedule_configure; pause;;
+   2) schedule_action schedule_remove; pause;;
+   3) schedule_action schedule_status; pause;;
+   4) schedule_action journalctl -u bitx-bk.service -n 60 --no-pager; pause;;
    0) return;;
    *) warn "Invalid selection";;
   esac

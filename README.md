@@ -45,6 +45,26 @@ The configuration is stored at:
 
 The repository setup creates a password file and initializes a new repository when needed. Keep the password and SFTP key available for disaster recovery.
 
+## Automatic backups
+
+Open **Settings → Automatic backup / service → Add service / set backup times**.
+Enter daily hours separated by commas, for example `10,12,18,00`, or include
+minutes: `10:30,18:45`. Times use the server's timezone. Repeating a time does
+not create an extra run. Updating the times replaces the previous schedule.
+
+The application verifies repository access, then installs `bitx-bk.service`
+and enables `bitx-bk.timer`, including after reboot. The service runs the same
+backup command and Telegram notifications as a manual backup. The menu shows
+status, the next run and recent service logs. A running service cannot start
+again concurrently; a scheduled occurrence during that run is skipped. Missed
+runs while the server is offline are skipped, so startup does not trigger an
+unexpected backup. Existing cron jobs are not modified; remove any separate
+bitx-bk cron schedule before enabling this timer to avoid duplicate runs.
+
+**Remove service / disable automatic backups** removes the managed service
+and timer, preserving configuration, snapshots and an in-progress backup.
+Manually created units with the same names are left untouched.
+
 ## First safe test
 
 ```bash
