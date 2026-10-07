@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.14.6"
+VERSION="0.14.7"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -448,7 +448,7 @@ repository_menu(){
    1) configure_local_repo; pause;;
    2) configure_sftp_repo; pause;;
    3) repository_status; pause;;
-   4) repo_cmd check; pause;;
+   4) repository_check_action; pause;;
    5) disconnect_repository; pause;;
    0) return;;
    *) warn "Invalid selection";;
@@ -465,6 +465,19 @@ repo_cmd(){
  else
   restic "$@"
  fi
+}
+
+# Keep fatal errors and errexit inside the check, without closing its menu.
+# CLI checks still return their original failure status.
+repository_check_action(){
+ set +e
+ (set -e; repo_cmd check)
+ local rc=$?
+ set -e
+ if ((rc != 0)); then
+  info "Repository check ended (exit $rc). Returning to menu."
+ fi
+ return 0
 }
 
 backup_plan(){
@@ -968,7 +981,7 @@ audits_menu(){
    2) docker_audit; pause;;
    3) virtualmin_audit; pause;;
    4) doctor; pause;;
-   5) repo_cmd check; pause;;
+   5) repository_check_action; pause;;
    0) return;;
    *) warn "Invalid selection";;
   esac
