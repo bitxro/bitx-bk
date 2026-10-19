@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.14.9"
+VERSION="0.14.10"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -1014,6 +1014,60 @@ audits_menu(){
  done
 }
 
+restic_password_show(){
+ (
+  need_root
+  local mode="${1:-backup}" config_file repository password_file answer
+  local RESTIC_REPOSITORY="" RESTIC_PASSWORD_FILE=""
+  local RECOVERY_REPOSITORY="" RECOVERY_PASSWORD_FILE=""
+  [[ -t 0 && -t 1 ]] || { error "Password display requires an interactive terminal (no redirection)."; return 1; }
+  case "$mode" in
+   backup) config_file="$CONFIG";;
+   recovery) config_file="$RECOVERY_CONFIG";;
+   *) error "Invalid password configuration selection"; return 1;;
+  esac
+  [[ -r "$config_file" ]] || { error "Configuration not found: $config_file"; return 1; }
+  source "$config_file"
+  if [[ "$mode" == backup ]]; then
+   repository="$RESTIC_REPOSITORY"; password_file="$RESTIC_PASSWORD_FILE"
+  else
+   repository="$RECOVERY_REPOSITORY"; password_file="$RECOVERY_PASSWORD_FILE"
+  fi
+  [[ -n "$repository" && -n "$password_file" ]] || { error "No repository password file configured for $mode."; return 1; }
+  [[ -f "$password_file" && -r "$password_file" && -s "$password_file" ]] || {
+   error "Password file is missing, empty or unreadable: $password_file"; return 1;
+  }
+  heading "Restic encryption password ($mode)"
+  info "Repository: $repository"
+  info "Password file: $password_file"
+  warn "The password will be visible in terminal scrollback/recordings. Keep it outside this server for recovery."
+  read -r -p "Type SHOW to display the original Restic password (0 to cancel): " answer || return 0
+  [[ "$answer" == SHOW ]] || { info "Cancelled"; return 0; }
+  printf '\nRestic password:\n'
+  cat -- "$password_file" || { error "Could not read password file"; return 1; }
+  printf '\n\n'
+ )
+}
+
+restic_password_menu(){
+ need_root
+ while true; do
+  say
+  heading "Show Restic encryption password"
+  info "This is the backup decryption password, not the SSH key or SFTP login password."
+  say "  1) Backup repository password"
+  say "  2) Recovery repository password"
+  say "  0) Back"
+  read -r -p "Select: " x || return
+  case "$x" in
+   1) restic_password_show backup || true; pause;;
+   2) restic_password_show recovery || true; pause;;
+   0) return;;
+   *) warn "Invalid selection";;
+  esac
+ done
+}
+
 settings_menu(){
  while true; do
   say
@@ -1021,6 +1075,7 @@ settings_menu(){
   say "  1) Backup repository"
   say "  2) Notifications"
   say "  3) Automatic backup / service"
+  say "  4) Show Restic encryption password"
   say "  0) Back"
   say
   read -r -p "Select: " x
@@ -1028,6 +1083,7 @@ settings_menu(){
    1) repository_menu;;
    2) notifications_menu;;
    3) schedule_menu;;
+   4) restic_password_menu;;
    0) return;;
    *) warn "Invalid selection";;
   esac
