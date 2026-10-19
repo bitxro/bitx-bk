@@ -45,6 +45,8 @@ The configuration is stored at:
 
 The repository setup creates a password file and initializes a new repository when needed. Keep the password and SFTP key available for disaster recovery.
 
+To view the existing Restic encryption password, open **6) Settings -> 4) Show Restic encryption password**, then choose the Backup or Recovery configuration. Root access, an interactive terminal and typing `SHOW` are required. The password is read from that configuration's existing password file; it is not changed or regenerated. It appears in clear text and may remain in terminal scrollback or recordings. Store it safely outside the backed-up server. This password decrypts the repository; it is separate from the SSH key and SFTP login password. Redirection to files or pipes is refused.
+
 ## Automatic backups
 
 Open **Settings → Automatic backup / service → Add service / set backup times**.
@@ -88,7 +90,7 @@ sudo bitx-bk check
 
 ## Security
 
-Restic encrypts repository contents. bitx-bk never intentionally prints WireGuard private keys, OpenVPN private material, RustDesk private keys, Docker environment values, or the restic password.
+Restic encrypts repository contents. bitx-bk never intentionally prints WireGuard private keys, OpenVPN private material, RustDesk private keys or Docker environment values. The Restic password is displayed only through the explicit root-only password display action described above; normal backup and diagnostic output does not print it.
 
 The staging directory is root-only and is removed after each run.
 
