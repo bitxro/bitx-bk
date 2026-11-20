@@ -238,10 +238,6 @@ def save(accounts):
     atomic_write(STATE / "accounts.json", json.dumps(accounts, indent=2))
 
 
-def os_name(name, role):
-    return ("bxsf-" if role == "sftp" else "bxsm-") + name
-
-
 def set_sftp_group(login, mode):
     entry = pwd.getpwnam(login)
     groups = {grp.getgrgid(gid).gr_name for gid in os.getgrouplist(login, entry.pw_gid)}
@@ -317,7 +313,7 @@ def smb_secret(login, password, create):
 
 
 def smb_home(login, existing=False):
-    if login != "bitxwindows" and (
+    if not NAME.fullmatch(login) and (
         not login.startswith("bxsm-") or not NAME.fullmatch(login[5:])
     ):
         raise ValueError("Identitate SMB invalidă.")
@@ -351,7 +347,7 @@ def account_change(data):
         role = data.get("role")
         if old or role not in ("sftp", "smb"):
             raise ValueError("Cont deja existent sau tip de acces invalid.")
-        login = os_name(name, role)
+        login = name
         if any(entry.pw_name == login for entry in pwd.getpwall()):
             raise ValueError("Identitatea sistemului este deja folosită.")
         old = {"name": name, "login": login, "role": role, "enabled": False}

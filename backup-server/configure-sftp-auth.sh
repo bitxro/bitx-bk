@@ -2,8 +2,8 @@
 set -euo pipefail
 umask 022
 
-if [[ $EUID != 0 || $# -gt 1 ]]; then
-    echo "Usage as root: configure-sftp-auth.sh [HEADSCALE_CIDR]" >&2
+if [[ $EUID != 0 || $# -gt 2 ]]; then
+    echo "Usage as root: configure-sftp-auth.sh [HEADSCALE_CIDR] [LAN_CIDR]" >&2
     exit 2
 fi
 
@@ -14,7 +14,7 @@ done
 test -x /usr/sbin/faillock
 install -d -m 0755 /var/lib/bitx-sftp-faillock
 
-python3 - "$overlay" <<'PY'
+python3 - "$overlay" "${2:-}" <<'PY'
 import ipaddress
 import re
 import shutil
@@ -23,7 +23,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-overlay = sys.argv[1]
+overlay, lan = sys.argv[1:]
 if overlay and not ipaddress.IPv4Network(overlay).subnet_of(ipaddress.IPv4Network("100.64.0.0/10")):
     raise SystemExit("Headscale CIDR must be within 100.64.0.0/10")
 
@@ -36,11 +36,20 @@ marker = "# bitX managed SFTP\n"
 if current.count(marker) != 1:
     raise SystemExit("Expected exactly one bitX SFTP configuration block.")
 original, managed = current.split(marker)
-overlay_line = "AllowUsers bxsf-*@" + overlay if overlay else ""
 original = re.sub(r"(?m)^AllowUsers bxsf-\*@100\.[^\n]* # bitX Headscale SFTP\n", "", original)
+if not lan:
+    scoped_rule = re.search(r"(?m)^\s+AllowUsers \*@([0-9./]+)(?: |$)", managed)
+    dropin = Path("/etc/ssh/sshd_config.d/20-bitx-managed.conf")
+    legacy_rule = re.search(r"(?m)^AllowUsers bxsf-\*@([0-9./]+)$", dropin.read_text()) if dropin.exists() else None
+    rule = scoped_rule or legacy_rule
+    if not rule:
+        raise SystemExit("Specify the authorized LAN CIDR explicitly.")
+    lan = rule[1]
+lan = str(ipaddress.IPv4Network(lan))
+network_rules = f"*@{lan}"
 if overlay:
-    original = overlay_line + " # bitX Headscale SFTP\n" + original
-config = original + marker + """
+    network_rules += f" *@{overlay}"
+config = original + marker + f"""
 Match Group bx-sftp-pw
     PasswordAuthentication yes
     PubkeyAuthentication no
@@ -51,6 +60,7 @@ Match Group bx-sftp-either
     AuthenticationMethods publickey password
 
 Match Group bx-sftp
+    AllowUsers {network_rules}
     PasswordAuthentication no
     AuthenticationMethods publickey
     AuthorizedKeysFile /etc/ssh/authorized_keys/%u

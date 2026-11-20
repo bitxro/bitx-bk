@@ -42,7 +42,6 @@ if [[ ! -e /etc/bitx-console/https.key ]]; then
     chmod 0644 /etc/bitx-console/https.crt
 fi
 install -d -m 0755 /etc/ssh/authorized_keys
-printf 'AllowUsers bxsf-*@%s\n' "$network" > /etc/ssh/sshd_config.d/20-bitx-managed.conf
 if ! grep -q '^# bitX managed SFTP$' /etc/ssh/sshd_config; then
     cp -an /etc/ssh/sshd_config /etc/ssh/sshd_config.before-bitx-console
     cat >> /etc/ssh/sshd_config <<'EOF'
@@ -57,7 +56,7 @@ Match Group bx-sftp
 EOF
 fi
 /usr/sbin/sshd -t
-bash configure-sftp-auth.sh "${BITX_HEADSCALE_CIDR:-}"
+bash configure-sftp-auth.sh "${BITX_HEADSCALE_CIDR:-}" "$network"
 
 # Extend the existing share to managed identities, retaining its current accounts.
 cp -an /etc/samba/smb.conf /etc/samba/smb.conf.before-bitx-console

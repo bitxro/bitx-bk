@@ -56,14 +56,14 @@ sudo journalctl -u bitx-console -u bitx-broker
   console never stores or displays them. To reset a password, edit the account
   and submit a new password and confirmation. Deactivation locks the local
   password, removes the key, and terminates active sessions.
-- Connect using the displayed `bxsf-` login. Every login has a separate
+- Connect using the username shown in Users. Every login has a separate
   root-owned chroot, and each assignment is a separate bind mount. The broker
   restores enabled assignments on boot after the storage mount. Managed accounts
   have no interactive shell, tunnel, or forwarding. OpenSSH allows three
   authentication attempts per connection. PAM locks a managed password for
   15 minutes after five failed attempts within 15 minutes. Key authentication
   remains available in mixed mode when only the password is locked.
-- **SMB** uses the displayed `bxsm-` login and the existing authenticated
+- **SMB** uses the username shown in Users and the existing authenticated
   `windows-backup` share and the private `home` share. Every SMB account
   gets its own directory under `bitX-BACKUP/smb-homes`. Connecting to
   `\\BACKUP-HOST\home` opens only the authenticated account's directory.
@@ -99,7 +99,7 @@ It stays separate from Restic and is never initialized as a repository.
 
 To allow managed SFTP accounts from an existing Headscale IPv4 network, set
 `BITX_HEADSCALE_CIDR` to the approved subnet when installing, or run
-`sudo bash backup-server/configure-sftp-auth.sh HEADSCALE_CIDR` followed by
+`sudo bash backup-server/configure-sftp-auth.sh HEADSCALE_CIDR PRIVATE_CIDR` followed by
 `sudo systemctl reload ssh`. The script validates the candidate configuration
 with `sshd -t`. It keeps the LAN restrictions and administrator authentication
 rules. Headscale access is additionally governed by the existing tailnet ACL.
