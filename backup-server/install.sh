@@ -85,6 +85,12 @@ if "[home]" not in parts:
     follow symlinks = no
     wide links = no
 """
+include = "    include = /etc/samba/bitx-managed-shares.conf"
+managed = Path("/etc/samba/bitx-managed-shares.conf")
+if not managed.exists():
+    managed.touch(mode=0o644)
+if include.strip() not in {line.strip() for line in updated.splitlines()}:
+    updated = updated.rstrip() + "\n" + include + "\n"
 if updated != before:
     p.write_text(updated)
 PY

@@ -224,6 +224,28 @@ def users():
     return redirect(url_for("page", name="users"))
 
 
+@app.post("/shares")
+def change_share():
+    action = request.form.get("action")
+    name = request.form.get("name", "")
+    if action not in ("sftp_directory", "smb_share", "smb_share_edit") or not NAME.fullmatch(name):
+        abort(400)
+    permissions = {"readers": [], "writers": []}
+    for field, value in request.form.items():
+        if field.startswith("smb_") and value in permissions:
+            permissions[value].append(field.removeprefix("smb_"))
+    try:
+        broker(action, name=name, **permissions)
+        result = "ok"
+        flash("Destinația a fost salvată.", "ok")
+    except (ValueError, OSError) as error:
+        result = "denied"
+        flash(str(error) if isinstance(error, ValueError) else "Serviciul local este indisponibil.", "error")
+    with database() as db:
+        audit(db, g.user, action, name, result)
+    return redirect(url_for("page", name="shares"))
+
+
 @app.get("/")
 @app.get("/<name>")
 def page(name="dashboard"):
@@ -234,7 +256,7 @@ def page(name="dashboard"):
     try:
         if selected in ("Dashboard", "Storage", "Repositories", "Users", "Shares"):
             context.update(broker("inventory"))
-        if selected == "Users":
+        if selected in ("Users", "Shares"):
             context["accounts"] = broker("list")
     except (ValueError, OSError):
         context["error"] = "Serviciul local este indisponibil."

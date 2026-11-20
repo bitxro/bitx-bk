@@ -18,6 +18,10 @@ STATE = Path("/var/lib/bitx-broker")
 DISK = Path("/mnt/bitx-backup")
 REPOS = DISK / "bitX-BACKUP/restic"
 SMB_HOMES = DISK / "bitX-BACKUP/smb-homes"
+SFTP_FILES = DISK / "bitX-BACKUP/sftp-files"
+SMB_SHARES = DISK / "bitX-BACKUP/smb-shares"
+SHARES_CONFIG = Path("/etc/samba/bitx-managed-shares.conf")
+SHARES_STATE = STATE / "shares.json"
 JAILS = Path("/srv/bitx-managed-sftp")
 KEYS = Path("/etc/ssh/authorized_keys")
 SOCKET = Path("/run/bitx-broker/control")
@@ -58,6 +62,112 @@ def repos():
     return found
 
 
+def file_destinations():
+    if not mounted() or not SFTP_FILES.is_dir() or SFTP_FILES.resolve() != SFTP_FILES:
+        return {}
+    return {
+        f"files-{entry.name}": entry for entry in sorted(SFTP_FILES.iterdir())
+        if NAME.fullmatch(entry.name) and entry.is_dir() and not entry.is_symlink()
+    }
+
+
+def sftp_destinations():
+    return file_destinations() | repos()
+
+
+def load_shares():
+    return json.loads(SHARES_STATE.read_text()) if SHARES_STATE.exists() else {}
+
+
+def storage_folder(root, name):
+    if not mounted() or root.parent.resolve() != root.parent:
+        raise ValueError("Volumul de backup este indisponibil.")
+    root.mkdir(exist_ok=True)
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError("Calea de stocare este invalidă.")
+    target = root / name
+    if target.exists() or target.is_symlink():
+        raise ValueError("Directorul există deja.")
+    target.mkdir()
+    return target
+
+
+def publish_shares(shares, disconnect=False):
+    if not SHARES_CONFIG.is_file():
+        raise OSError("Managed Samba include has not been installed.")
+    previous = SHARES_CONFIG.read_text()
+    sections = []
+    for name, share in sorted(shares.items()):
+        readers = share["readers"]
+        writers = share["writers"]
+        users = sorted(set(readers + writers))
+        sections.extend((
+            f"[{name}]", f"    path = {SMB_SHARES / name}",
+            "    access based share enum = yes", "    guest ok = no",
+            "    read only = yes", "    follow symlinks = no", "    wide links = no",
+            "    valid users = " + " ".join(users) if users else "    available = no",
+            "    write list = " + " ".join(writers), "",
+        ))
+    candidate = "\n".join(sections)
+    try:
+        atomic_write(SHARES_CONFIG, candidate, 0o644)
+        run("testparm", "-s")
+        if disconnect and candidate != previous:
+            run("systemctl", "restart", "smbd")
+        else:
+            run("smbcontrol", "all", "reload-config")
+        atomic_write(SHARES_STATE, json.dumps(shares, indent=2))
+    except (OSError, subprocess.TimeoutExpired):
+        atomic_write(SHARES_CONFIG, previous, 0o644)
+        run("systemctl", "restart", "smbd")
+        raise
+
+
+def change_destination(data):
+    name, action = data.get("name"), data.get("action")
+    if not isinstance(name, str) or not NAME.fullmatch(name):
+        raise ValueError("Numele trebuie să aibă maximum 20 de litere mici, cifre sau cratime.")
+    if action == "sftp_directory":
+        if f"files-{name}" in repos():
+            raise ValueError("Un director Restic folosește deja acest nume.")
+        storage_folder(SFTP_FILES, name)
+        return
+    shares = load_shares()
+    known_logins = {row["login"] for row in load_accounts().values() if row["role"] == "smb"}
+    if get_local_user("bitxwindows"):
+        known_logins.add("bitxwindows")
+    permissions = {}
+    for scope in ("readers", "writers"):
+        values = data.get(scope, [])
+        if not isinstance(values, list) or any(not isinstance(v, str) or v not in known_logins for v in values):
+            raise ValueError("Selectează numai conturi Samba existente.")
+        permissions[scope] = sorted(set(values))
+    if set(permissions["readers"]) & set(permissions["writers"]):
+        raise ValueError("Alege un singur nivel de acces pentru fiecare cont.")
+    target = None
+    if action == "smb_share":
+        defined = {match.lower() for match in re.findall(r"(?m)^\[([^\]]+)\]", run("testparm", "-s"))}
+        if name in defined or name in shares or name in {"global", "homes", "printers"}:
+            raise ValueError("Există deja un share cu acest nume.")
+        target = storage_folder(SMB_SHARES, name)
+    elif name not in shares:
+        raise ValueError("Share-ul nu este gestionat de această pagină.")
+    shares[name] = permissions
+    try:
+        publish_shares(shares, disconnect=action == "smb_share_edit")
+    except (OSError, subprocess.TimeoutExpired):
+        if target is not None:
+            target.rmdir()
+        raise
+
+
+def get_local_user(login):
+    try:
+        return pwd.getpwnam(login)
+    except KeyError:
+        return None
+
+
 def inventory():
     disks = None
     if mounted():
@@ -93,7 +203,9 @@ def inventory():
             except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
                 status = "Citirea snapshoturilor a eșuat"
         repository_rows.append({"name": name, "latest": latest, "status": status})
-    return {"disk": disks, "services": services, "repositories": repository_rows}
+    return {"disk": disks, "services": services, "repositories": repository_rows,
+            "sftp_destinations": list(sftp_destinations()),
+            "file_destinations": list(file_destinations()), "shares": load_shares()}
 
 
 def key_line(value):
@@ -158,7 +270,7 @@ def revoke_sftp(login):
 
 
 def authorize_sftp(login, account, password=""):
-    allowed = repos()
+    allowed = sftp_destinations()
     if not account["repositories"] or not set(account["repositories"]) <= allowed.keys():
         raise ValueError("Selectează doar directoare disponibile pe HDD.")
     jail = JAILS / login
@@ -261,6 +373,15 @@ def account_change(data):
             save(accounts)
             if action == "delete":
                 if role == "smb":
+                    shares = load_shares()
+                    changed = False
+                    for share in shares.values():
+                        for scope in ("readers", "writers"):
+                            if login in share[scope]:
+                                share[scope].remove(login)
+                                changed = True
+                    if changed:
+                        publish_shares(shares, disconnect=True)
                     run("pdbedit", "-x", "-u", login)
                 run("userdel", login)
                 if role == "sftp":
@@ -304,8 +425,8 @@ def configure_sftp(data, account):
     names = data.get("repositories")
     if not isinstance(names, list) or not 1 <= len(names) <= 32 or any(
         not isinstance(name, str) or not REPO.fullmatch(name) for name in names
-    ) or not set(names) <= repos().keys():
-        raise ValueError("Selectează repository-uri din lista disponibilă.")
+    ) or not set(names) <= sftp_destinations().keys():
+        raise ValueError("Selectează destinații SFTP din lista disponibilă.")
     value = data.get("key", "")
     if not isinstance(value, str) or len(value) > 1024:
         raise ValueError("Cheia publică SSH este invalidă.")
@@ -372,6 +493,10 @@ class Handler(socketserver.StreamRequestHandler):
                 result = [{k: v for k, v in row.items() if k != "key"} for row in load_accounts().values()]
             elif action in ("create", "edit", "disable", "delete"):
                 account_change(data)
+                result = None
+                print(json.dumps({"actor": actor, "action": action, "target": name, "outcome": "ok"}), flush=True)
+            elif action in ("sftp_directory", "smb_share", "smb_share_edit"):
+                change_destination(data)
                 result = None
                 print(json.dumps({"actor": actor, "action": action, "target": name, "outcome": "ok"}), flush=True)
             else:

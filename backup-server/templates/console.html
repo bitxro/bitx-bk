@@ -9,10 +9,21 @@
 <body>
 {% macro csrf() %}<input type="hidden" name="csrf" value="{{ session.csrf }}">{% endmacro %}
 {% macro repository_picker(chosen=[]) %}
-  <fieldset><legend>Repository-uri autorizate</legend>
-    {% for repo in repositories|default([]) %}
-      <label class="check"><input type="checkbox" name="repositories" value="{{ repo.name }}" {% if repo.name in chosen %}checked{% endif %}>{{ repo.name }}</label>
-    {% else %}<p class="muted">HDD-ul nu are directoare de repository disponibile.</p>{% endfor %}
+  <fieldset><legend>Destinații SFTP autorizate</legend>
+    {% for destination in sftp_destinations|default([]) %}
+      <label class="check"><input type="checkbox" name="repositories" value="{{ destination }}" {% if destination in chosen %}checked{% endif %}>{{ destination }}</label>
+    {% else %}<p class="muted">Adaugă mai întâi un director SFTP din <a href="/shares">Shares</a>.</p>{% endfor %}
+  </fieldset>
+{% endmacro %}
+{% macro smb_permissions(readers=[], writers=[]) %}
+  <fieldset><legend>Acces la share</legend>
+    {% set smb_accounts = ['bitxwindows'] + (accounts|default([])|selectattr('role', 'equalto', 'smb')|map(attribute='login')|list) %}
+    {% for account in smb_accounts %}
+      <p class="muted">{{ account }}</p>
+      <label class="check"><input type="radio" name="smb_{{ account }}" value="none" {% if account not in readers and account not in writers %}checked{% endif %}>Fără acces</label>
+      <label class="check"><input type="radio" name="smb_{{ account }}" value="readers" {% if account in readers %}checked{% endif %}>Doar citire</label>
+      <label class="check"><input type="radio" name="smb_{{ account }}" value="writers" {% if account in writers %}checked{% endif %}>Citire și scriere</label>
+    {% endfor %}
   </fieldset>
 {% endmacro %}
 {% macro storage() %}
@@ -108,6 +119,31 @@
   {% elif page == 'Shares' %}
     <div class="panel"><h2>windows-backup</h2><p>SMB 3 · TCP 445</p><p>Stare smbd <strong>{{ (services or {}).get('smbd', 'indisponibil') }}</strong></p><p>Conturile se gestionează din <a href="/users">Users</a>.</p></div>
     <div class="panel"><h2>home</h2><p>Folder personal SMB. Aceeași cale deschide folderul contului cu care te autentifici.</p></div>
+    <h2>Share-uri SMB gestionate</h2>
+    <div class="form-grid">
+      {% for name, share in (shares or {}).items() %}
+        <form method="post" action="/shares" class="panel">
+          {{ csrf() }}<input type="hidden" name="name" value="{{ name }}">
+          <h3>{{ name }}</h3>
+          {{ smb_permissions(share.readers, share.writers) }}
+          <button name="action" value="smb_share_edit">Salvează accesul</button>
+        </form>
+      {% else %}<p class="muted">Nu există share-uri SMB suplimentare.</p>{% endfor %}
+      <form method="post" action="/shares" class="panel">
+        {{ csrf() }}<h3>Adaugă share SMB</h3>
+        <label>Nume<input name="name" pattern="[a-z][a-z0-9\-]{0,19}" maxlength="20" required></label>
+        {{ smb_permissions() }}
+        <button name="action" value="smb_share">Creează share</button>
+      </form>
+    </div>
+    <h2>Directoare SFTP pentru fișiere</h2>
+    {% if file_destinations %}<ul>{% for name in file_destinations %}<li><code>/{{ name }}</code></li>{% endfor %}</ul>{% endif %}
+    <div class="form-grid"><form method="post" action="/shares" class="panel">
+      {{ csrf() }}<h3>Adaugă director SFTP</h3>
+      <label>Nume<input name="name" pattern="[a-z][a-z0-9\-]{0,19}" maxlength="20" required></label>
+      <p class="muted">După creare, atribuie directorul unui cont din Users. Calea SFTP va începe cu <code>/files-</code>.</p>
+      <button name="action" value="sftp_directory">Creează director</button>
+    </form></div>
   {% elif page == 'Users' %}
     <h2>Administratori web</h2>
     <div class="table-scroll"><table><thead><tr><th>Cont</th><th>Stare</th><th>Administrare</th></tr></thead><tbody>
@@ -132,7 +168,7 @@
         {% else %}
           <label>Parolă<input name="password" type="password" autocomplete="new-password" minlength="14" maxlength="128" required></label>
         {% endif %}
-        <button name="action" value="create" {% if role == 'sftp' and not repositories %}disabled{% endif %}>Creează cont</button>
+        <button name="action" value="create" {% if role == 'sftp' and not sftp_destinations %}disabled{% endif %}>Creează cont</button>
       </form>
     {% endfor %}
     </div>
