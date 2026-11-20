@@ -89,13 +89,17 @@ delete repository data.
 The offline recovery and migration procedures are in
 [BACKUP-SERVER.md](../docs/BACKUP-SERVER.md).
 
-On **Shares**, create an SMB share backed by its own directory under
-`bitX-BACKUP/smb-shares`. Select **No access**, **Read only**, or **Read and
-write** for each Samba account. Changing permissions disconnects current SMB
+On **Shares**, create an SMB share by name. Its directory is under
+`bitX-BACKUP/smb-shares` and it starts with no users. Open the new share in
+the list and select **No access**, **Read only**, or **Read and write** for
+each Samba account. Reducing permissions disconnects current SMB
 sessions so cached access is revoked. Existing shares and personal homes
 remain separate. Use **Add SFTP directory** on the same page for ordinary
-file backups. Assign the resulting `/files-NAME` destination in **Users**.
-It stays separate from Restic and is never initialized as a repository.
+file backups. Assign the resulting `/NAME` destination in **Users**. Existing
+`/files-NAME` assignments remain supported. Use **Prepare Restic directory**
+to create a separate empty directory under the Restic root. The console
+recognizes the standard Restic layout and reports when a directory is still
+empty or uninitialized. It never initializes repository data itself.
 
 To allow managed SFTP accounts from an existing Headscale IPv4 network, set
 `BITX_HEADSCALE_CIDR` to the approved subnet when installing, or run

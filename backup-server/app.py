@@ -228,7 +228,7 @@ def users():
 def change_share():
     action = request.form.get("action")
     name = request.form.get("name", "")
-    if action not in ("sftp_directory", "smb_share", "smb_share_edit") or not NAME.fullmatch(name):
+    if action not in ("sftp_directory", "restic_directory", "smb_share", "smb_share_edit") or not NAME.fullmatch(name):
         abort(400)
     permissions = {"readers": [], "writers": []}
     for field, value in request.form.items():

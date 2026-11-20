@@ -67,13 +67,15 @@ def file_destinations():
     if not mounted() or not SFTP_FILES.is_dir() or SFTP_FILES.resolve() != SFTP_FILES:
         return {}
     return {
-        f"files-{entry.name}": entry for entry in sorted(SFTP_FILES.iterdir())
+        entry.name: entry for entry in sorted(SFTP_FILES.iterdir())
         if NAME.fullmatch(entry.name) and entry.is_dir() and not entry.is_symlink()
     }
 
 
 def sftp_destinations():
-    return file_destinations() | repos()
+    files = file_destinations()
+    legacy = {f"files-{name}": path for name, path in files.items()}
+    return legacy | files | repos()
 
 
 def load_shares():
@@ -128,10 +130,11 @@ def change_destination(data):
     name, action = data.get("name"), data.get("action")
     if not isinstance(name, str) or not NAME.fullmatch(name):
         raise ValueError("Numele trebuie să aibă maximum 20 de litere mici, cifre sau cratime.")
-    if action == "sftp_directory":
-        if f"files-{name}" in repos():
-            raise ValueError("Un director Restic folosește deja acest nume.")
-        storage_folder(SFTP_FILES, name)
+    if action in ("sftp_directory", "restic_directory"):
+        existing = {entry.casefold() for entry in sftp_destinations()}
+        if name == "home" or name in existing or (action == "sftp_directory" and f"files-{name}" in existing):
+            raise ValueError("Numele este deja folosit de o destinație SFTP sau este rezervat.")
+        storage_folder(SFTP_FILES if action == "sftp_directory" else REPOS, name)
         return
     shares = load_shares()
     known_logins = {row["login"] for row in load_accounts().values() if row["role"] == "smb"}
@@ -146,6 +149,7 @@ def change_destination(data):
     if set(permissions["readers"]) & set(permissions["writers"]):
         raise ValueError("Alege un singur nivel de acces pentru fiecare cont.")
     target = None
+    previous = shares.get(name)
     if action == "smb_share":
         defined = {match.lower() for match in re.findall(r"(?m)^\[([^\]]+)\]", run("testparm", "-s"))}
         if name in defined or name in shares or name in {"global", "homes", "printers"}:
@@ -153,9 +157,13 @@ def change_destination(data):
         target = storage_folder(SMB_SHARES, name)
     elif name not in shares:
         raise ValueError("Share-ul nu este gestionat de această pagină.")
+    disconnect = previous is not None and (
+        not set(previous["readers"]) <= set(permissions["readers"] + permissions["writers"])
+        or not set(previous["writers"]) <= set(permissions["writers"])
+    )
     shares[name] = permissions
     try:
-        publish_shares(shares, disconnect=action == "smb_share_edit")
+        publish_shares(shares, disconnect=disconnect)
     except (OSError, subprocess.TimeoutExpired):
         if target is not None:
             target.rmdir()
@@ -186,7 +194,11 @@ def inventory():
             services[name] = "inactive"
     repository_rows = []
     for name, path in repos().items():
-        initialized = (path / "config").is_file() and (path / "snapshots").is_dir()
+        config = path / "config"
+        initialized = config.is_file() and not config.is_symlink() and all(
+            (path / folder).is_dir() and not (path / folder).is_symlink()
+            for folder in ("data", "index", "keys", "snapshots")
+        )
         latest = None
         password = Path("/etc/bitx-console/restic") / f"{name}.password"
         if not initialized:
@@ -204,9 +216,15 @@ def inventory():
             except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
                 status = "Citirea snapshoturilor a eșuat"
         repository_rows.append({"name": name, "latest": latest, "status": status})
+    files = file_destinations()
+    visible = set(files) | set(repos())
+    for account in load_accounts().values():
+        if account["role"] == "sftp":
+            visible.update(account["repositories"])
+    visible.intersection_update(sftp_destinations())
     return {"disk": disks, "services": services, "repositories": repository_rows,
-            "sftp_destinations": list(sftp_destinations()),
-            "file_destinations": list(file_destinations()), "shares": load_shares()}
+            "sftp_destinations": sorted(visible),
+            "file_destinations": list(files), "shares": load_shares()}
 
 
 def key_line(value):
@@ -507,7 +525,7 @@ class Handler(socketserver.StreamRequestHandler):
                 account_change(data)
                 result = None
                 print(json.dumps({"actor": actor, "action": action, "target": name, "outcome": "ok"}), flush=True)
-            elif action in ("sftp_directory", "smb_share", "smb_share_edit"):
+            elif action in ("sftp_directory", "restic_directory", "smb_share", "smb_share_edit"):
                 change_destination(data)
                 result = None
                 print(json.dumps({"actor": actor, "action": action, "target": name, "outcome": "ok"}), flush=True)

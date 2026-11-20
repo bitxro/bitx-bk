@@ -11,7 +11,7 @@
 {% macro repository_picker(chosen=[]) %}
   <fieldset><legend>Destinații SFTP autorizate</legend>
     {% for destination in sftp_destinations|default([]) %}
-      <label class="check"><input type="checkbox" name="repositories" value="{{ destination }}" {% if destination in chosen %}checked{% endif %}>{{ destination }}</label>
+      <label class="check"><input type="checkbox" name="repositories" value="{{ destination }}" {% if destination in chosen %}checked{% endif %}>{{ destination }} <small class="muted">· {{ 'Restic' if destination in (repositories|default([])|map(attribute='name')|list) else 'Fișiere' }}</small></label>
     {% endfor %}
     <p class="muted">Dacă nu selectezi nimic, contul primește un folder privat <code>/home</code>.</p>
   </fieldset>
@@ -122,28 +122,38 @@
     <div class="panel"><h2>home</h2><p>Folder personal SMB. Aceeași cale deschide folderul contului cu care te autentifici.</p></div>
     <h2>Share-uri SMB gestionate</h2>
     <div class="form-grid">
-      {% for name, share in (shares or {}).items() %}
-        <form method="post" action="/shares" class="panel">
-          {{ csrf() }}<input type="hidden" name="name" value="{{ name }}">
-          <h3>{{ name }}</h3>
-          {{ smb_permissions(share.readers, share.writers) }}
-          <button name="action" value="smb_share_edit">Salvează accesul</button>
-        </form>
-      {% else %}<p class="muted">Nu există share-uri SMB suplimentare.</p>{% endfor %}
       <form method="post" action="/shares" class="panel">
         {{ csrf() }}<h3>Adaugă share SMB</h3>
         <label>Nume<input name="name" pattern="[a-z][a-z0-9\-]{0,19}" maxlength="20" required></label>
-        {{ smb_permissions() }}
+        <p class="muted">După creare, selectează share-ul din listă pentru a-i acorda acces utilizatorilor.</p>
         <button name="action" value="smb_share">Creează share</button>
       </form>
+      {% for name, share in (shares or {}).items() %}
+        <details class="panel">
+          <summary><strong>{{ name }}</strong> · {{ (share.readers|length + share.writers|length)|string + ' conturi cu acces' if share.readers or share.writers else 'Fără utilizatori' }}</summary>
+          <form method="post" action="/shares">
+            {{ csrf() }}<input type="hidden" name="name" value="{{ name }}">
+            {{ smb_permissions(share.readers, share.writers) }}
+            <button name="action" value="smb_share_edit">Salvează accesul</button>
+          </form>
+        </details>
+      {% endfor %}
     </div>
     <h2>Directoare SFTP pentru fișiere</h2>
     {% if file_destinations %}<ul>{% for name in file_destinations %}<li><code>/{{ name }}</code></li>{% endfor %}</ul>{% endif %}
     <div class="form-grid"><form method="post" action="/shares" class="panel">
       {{ csrf() }}<h3>Adaugă director SFTP</h3>
       <label>Nume<input name="name" pattern="[a-z][a-z0-9\-]{0,19}" maxlength="20" required></label>
-      <p class="muted">După creare, atribuie directorul unui cont din Users. Calea SFTP va începe cu <code>/files-</code>.</p>
+      <p class="muted">Atribuie directorul din Users. Calea SFTP folosește exact numele introdus, de exemplu <code>/arhiva</code>.</p>
       <button name="action" value="sftp_directory">Creează director</button>
+    </form></div>
+    <h2>Destinații Restic</h2>
+    {{ repository_table() }}
+    <div class="form-grid"><form method="post" action="/shares" class="panel">
+      {{ csrf() }}<h3>Pregătește director Restic</h3>
+      <label>Nume<input name="name" pattern="[a-z][a-z0-9\-]{0,19}" maxlength="20" required></label>
+      <p class="muted">Creează un director gol în zona Restic. Poți apoi să îl atribui unui cont SFTP din Users.</p>
+      <button name="action" value="restic_directory">Creează director</button>
     </form></div>
   {% elif page == 'Users' %}
     <h2>Administratori web</h2>
