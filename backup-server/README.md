@@ -52,7 +52,11 @@ sudo journalctl -u bitx-console -u bitx-broker
   assignments on boot after the storage mount. Users with multiple assignments
   can write to each assigned directory.
 - **SMB** uses the displayed `bxsm-` login and the existing authenticated
-  `windows-backup` share. The password is passed through standard input to
+  `windows-backup` share and the private `home` share. Every SMB account
+  gets its own directory under `bitX-BACKUP/smb-homes`. Connecting to
+  `\\BACKUP-HOST\home` opens only the authenticated account's directory.
+  Account removal keeps that directory and prevents automatic reuse of its
+  login. The password is passed through standard input to
   Samba and never retained in the console's database or logs. Reset and
   disable operations restart Samba to invalidate already authenticated sessions,
   briefly interrupting other SMB clients.

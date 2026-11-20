@@ -16,6 +16,7 @@ from pathlib import Path
 STATE = Path("/var/lib/bitx-broker")
 DISK = Path("/mnt/bitx-backup")
 REPOS = DISK / "bitX-BACKUP/restic"
+SMB_HOMES = DISK / "bitX-BACKUP/smb-homes"
 JAILS = Path("/srv/bitx-managed-sftp")
 KEYS = Path("/etc/ssh/authorized_keys")
 SOCKET = Path("/run/bitx-broker/control")
@@ -163,6 +164,25 @@ def smb_secret(login, password, create):
     run(*args, login, secret=f"{password}\n{password}\n")
 
 
+def smb_home(login, existing=False):
+    if login != "bitxwindows" and (
+        not login.startswith("bxsm-") or not NAME.fullmatch(login[5:])
+    ):
+        raise ValueError("Identitate SMB invalidă.")
+    if not mounted() or SMB_HOMES.parent.resolve() != SMB_HOMES.parent:
+        raise ValueError("Volumul pentru folderele personale este indisponibil.")
+    SMB_HOMES.mkdir(exist_ok=True)
+    if SMB_HOMES.is_symlink() or not SMB_HOMES.is_dir():
+        raise ValueError("Calea pentru folderele personale este invalidă.")
+    home = SMB_HOMES / login
+    if home.is_symlink() or (home.exists() and not home.is_dir()):
+        raise ValueError("Calea folderului personal este invalidă.")
+    if home.exists() and not existing:
+        raise ValueError("Numele are deja un folder personal păstrat. Alege alt nume.")
+    home.mkdir(exist_ok=existing)
+    return home
+
+
 def revoke_smb(login):
     run("smbpasswd", "-d", login)
     # Reset sessions for this service so an already authenticated client is disconnected.
@@ -190,15 +210,19 @@ def account_change(data):
         group = "bx-sftp" if role == "sftp" else "bx-smb"
         run("useradd", "--system", "--no-create-home", "--home-dir", "/", "--shell",
             "/usr/sbin/nologin", "--groups", f"bitxdata,{group}", login)
+        new_home = None
         try:
             if role == "sftp":
                 authorize_sftp(login, old)
             else:
+                new_home = smb_home(login)
                 smb_secret(login, data["password"], create=True)
         except (OSError, ValueError, subprocess.TimeoutExpired):
             if role == "sftp":
                 revoke_sftp(login)
             run("userdel", login)
+            if new_home is not None:
+                new_home.rmdir()
             raise
         old["enabled"] = True
         accounts[name] = old
@@ -268,6 +292,15 @@ def configure_sftp(data, account):
 
 
 def restore():
+    if mounted():
+        homes = ["bitxwindows"]
+        homes.extend(entry["login"] for entry in load_accounts().values() if entry["role"] == "smb")
+        for login in homes:
+            if any(entry.pw_name == login for entry in pwd.getpwall()):
+                try:
+                    smb_home(login, existing=True)
+                except (OSError, ValueError):
+                    print(f"SMB home unavailable login={login}", flush=True)
     for entry in load_accounts().values():
         if entry["role"] != "sftp":
             continue

@@ -94,6 +94,7 @@
     {{ repository_table() }}
   {% elif page == 'Shares' %}
     <div class="panel"><h2>windows-backup</h2><p>SMB 3 · TCP 445</p><p>Stare smbd <strong>{{ (services or {}).get('smbd', 'indisponibil') }}</strong></p><p>Conturile se gestionează din <a href="/users">Users</a>.</p></div>
+    <div class="panel"><h2>home</h2><p>Folder personal SMB. Aceeași cale deschide folderul contului cu care te autentifici.</p></div>
   {% elif page == 'Users' %}
     <h2>Administratori web</h2>
     <div class="table-scroll"><table><thead><tr><th>Cont</th><th>Stare</th><th>Administrare</th></tr></thead><tbody>
@@ -103,7 +104,7 @@
     <h2>Conturi SFTP și SMB gestionate</h2>
     <div class="table-scroll"><table><thead><tr><th>Cont de conectare</th><th>Tip</th><th>Acces</th><th>Stare</th><th>Administrare</th></tr></thead><tbody>
     {% for user in accounts|default([]) %}
-      <tr><td>{{ user.login }}</td><td>{{ user.role|upper }}</td><td>{{ user.repositories|join(', ') if user.role == 'sftp' else 'windows-backup' }}</td>
+      <tr><td>{{ user.login }}</td><td>{{ user.role|upper }}</td><td>{{ user.repositories|join(', ') if user.role == 'sftp' else 'home (privat), windows-backup (comun)' }}</td>
       <td>{{ 'Activ' if user.enabled else 'Dezactivat' }}</td><td>{{ row_actions(user.name, user.role, user.repositories|default([]), user.enabled) }}</td></tr>
     {% else %}<tr><td colspan="5">Nu există încă utilizatori gestionați.</td></tr>{% endfor %}
     </tbody></table></div>

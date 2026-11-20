@@ -73,7 +73,19 @@ if not match:
     raise SystemExit("windows-backup has no explicit valid users")
 if "@bx-smb" not in match[2].split():
     parts[idx] = re.sub(pattern, lambda m: m[0] + " @bx-smb", parts[idx], count=1)
-    p.write_text("".join(parts))
+updated = "".join(parts)
+if "[home]" not in parts:
+    updated += """
+[home]
+    path = /mnt/bitx-backup/bitX-BACKUP/smb-homes/%u
+    valid users = bitxwindows @bx-smb
+    read only = no
+    guest ok = no
+    follow symlinks = no
+    wide links = no
+"""
+if updated != before:
+    p.write_text(updated)
 PY
 testparm -s >/dev/null
 
