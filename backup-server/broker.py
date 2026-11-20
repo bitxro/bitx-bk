@@ -19,6 +19,7 @@ DISK = Path("/mnt/bitx-backup")
 REPOS = DISK / "bitX-BACKUP/restic"
 SMB_HOMES = DISK / "bitX-BACKUP/smb-homes"
 SFTP_FILES = DISK / "bitX-BACKUP/sftp-files"
+SFTP_HOMES = DISK / "bitX-BACKUP/sftp-homes"
 SMB_SHARES = DISK / "bitX-BACKUP/smb-shares"
 SHARES_CONFIG = Path("/etc/samba/bitx-managed-shares.conf")
 SHARES_STATE = STATE / "shares.json"
@@ -271,15 +272,30 @@ def revoke_sftp(login):
 
 def authorize_sftp(login, account, password=""):
     allowed = sftp_destinations()
-    if not account["repositories"] or not set(account["repositories"]) <= allowed.keys():
+    selected = account["repositories"]
+    if not set(selected) <= allowed.keys():
         raise ValueError("Selectează doar directoare disponibile pe HDD.")
+    if selected:
+        assignments = [(name, allowed[name]) for name in selected]
+    else:
+        home = SFTP_HOMES / login
+        if account.get("home_provisioned"):
+            if not mounted() or not home.is_dir() or home.resolve() != home:
+                raise ValueError("Directorul personal SFTP este indisponibil.")
+        else:
+            home = storage_folder(SFTP_HOMES, login)
+            account["home_provisioned"] = True
+        assignments = [("home", home)]
     jail = JAILS / login
     jail.mkdir(mode=ROOT_DIR_MODE, exist_ok=True)
     jail.chmod(ROOT_DIR_MODE)
-    for name in account["repositories"]:
+    for name, source in assignments:
         target = jail / name
         target.mkdir(mode=0o700)
-        run("mount", "--bind", str(allowed[name]), str(target))
+        run("mount", "--bind", str(source), str(target))
+    start = "/" if selected else "/home"
+    if pwd.getpwnam(login).pw_dir != start:
+        run("usermod", "--home", start, login)
     mode = account.get("auth", "key")
     if mode in PASSWORD_GROUPS:
         if password:
@@ -423,7 +439,7 @@ def validate_password(password):
 
 def configure_sftp(data, account):
     names = data.get("repositories")
-    if not isinstance(names, list) or not 1 <= len(names) <= 32 or any(
+    if not isinstance(names, list) or len(names) > 32 or any(
         not isinstance(name, str) or not REPO.fullmatch(name) for name in names
     ) or not set(names) <= sftp_destinations().keys():
         raise ValueError("Selectează destinații SFTP din lista disponibilă.")

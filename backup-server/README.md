@@ -44,8 +44,11 @@ sudo journalctl -u bitx-console -u bitx-broker
 
 - **Web administrator** resides only in the console database. Resetting or
   disabling the account revokes its sessions.
-- **SFTP** requires one or more explicitly selected directories under the
-  mounted Restic area. Choose **Cheie SSH**, **Parolă**, or **Cheie SSH sau
+- **SFTP** can use explicitly selected directories under the
+  mounted Restic area, or ordinary file destinations. With no destination
+  selected, the account receives a private folder under
+  `bitX-BACKUP/sftp-homes` and starts in `/home`. Account deletion retains
+  that folder. Choose **Cheie SSH**, **Parolă**, or **Cheie SSH sau
   parolă**. The last option accepts either credential independently. Existing
   accounts without a configured mode keep key-only access. Upload only the
   client-generated Ed25519 public key. Passwords must be at least 14 characters,

@@ -12,7 +12,8 @@
   <fieldset><legend>Destinații SFTP autorizate</legend>
     {% for destination in sftp_destinations|default([]) %}
       <label class="check"><input type="checkbox" name="repositories" value="{{ destination }}" {% if destination in chosen %}checked{% endif %}>{{ destination }}</label>
-    {% else %}<p class="muted">Adaugă mai întâi un director SFTP din <a href="/shares">Shares</a>.</p>{% endfor %}
+    {% endfor %}
+    <p class="muted">Dacă nu selectezi nimic, contul primește un folder privat <code>/home</code>.</p>
   </fieldset>
 {% endmacro %}
 {% macro smb_permissions(readers=[], writers=[]) %}
@@ -153,7 +154,7 @@
     <h2>Conturi SFTP și SMB gestionate</h2>
     <div class="table-scroll"><table><thead><tr><th>Cont de conectare</th><th>Tip</th><th>Acces</th><th>Stare</th><th>Administrare</th></tr></thead><tbody>
     {% for user in accounts|default([]) %}
-      <tr><td>{{ user.login }}</td><td>{{ user.role|upper }}</td><td>{{ user.repositories|join(', ') if user.role == 'sftp' else 'home (privat), windows-backup (comun)' }}</td>
+      <tr><td>{{ user.login }}</td><td>{{ user.role|upper }}</td><td>{{ (user.repositories|join(', ') if user.repositories else '/home (privat)') if user.role == 'sftp' else 'home (privat), windows-backup (comun)' }}</td>
       <td>{{ 'Activ' if user.enabled else 'Dezactivat' }}{% if user.role == 'sftp' %}<br><span class="muted">{{ {'key':'Cheie SSH','password':'Parolă','either':'Cheie SSH sau parolă'}[user.auth|default('key')] }}</span>{% endif %}</td><td>{{ row_actions(user.name, user.role, user.repositories|default([]), user.enabled, user.auth|default('key')) }}</td></tr>
     {% else %}<tr><td colspan="5">Nu există încă utilizatori gestionați.</td></tr>{% endfor %}
     </tbody></table></div>
@@ -168,7 +169,7 @@
         {% else %}
           <label>Parolă<input name="password" type="password" autocomplete="new-password" minlength="14" maxlength="128" required></label>
         {% endif %}
-        <button name="action" value="create" {% if role == 'sftp' and not sftp_destinations %}disabled{% endif %}>Creează cont</button>
+        <button name="action" value="create">Creează cont</button>
       </form>
     {% endfor %}
     </div>
