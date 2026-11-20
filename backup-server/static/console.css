@@ -73,7 +73,7 @@ label { display: grid; gap: 4px; font-weight: 600; }
 form { display: grid; gap: 10px; }
 td form { margin: 8px 0; min-width: 185px; }
 summary { cursor: pointer; color: var(--accent); }
-input:not([type=checkbox]) { width: 100%; padding: 8px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--base); color: var(--ink); font: inherit; }
+input:not([type=checkbox]), select { width: 100%; padding: 8px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--base); color: var(--ink); font: inherit; }
 fieldset { min-width: 0; border: 1px solid var(--line); border-radius: 7px; }
 .check { display: flex; align-items: baseline; gap: 6px; overflow-wrap: anywhere; }
 button { width: fit-content; background: var(--accent); color: var(--accent-ink); border: 1px solid transparent; border-radius: 7px; padding: 7px 12px; font: inherit; font-weight: 650; cursor: pointer; }

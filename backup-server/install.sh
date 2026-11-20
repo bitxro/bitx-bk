@@ -57,6 +57,7 @@ Match Group bx-sftp
 EOF
 fi
 /usr/sbin/sshd -t
+bash configure-sftp-auth.sh "${BITX_HEADSCALE_CIDR:-}"
 
 # Extend the existing share to managed identities, retaining its current accounts.
 cp -an /etc/samba/smb.conf /etc/samba/smb.conf.before-bitx-console

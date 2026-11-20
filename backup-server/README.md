@@ -44,13 +44,22 @@ sudo journalctl -u bitx-console -u bitx-broker
 
 - **Web administrator** resides only in the console database. Resetting or
   disabling the account revokes its sessions.
-- **SFTP** takes a client-generated Ed25519 public key and one or more
-  explicitly selected directories under the mounted Restic area. Connect using
-  the displayed `bxsf-` login. Every login has a separate root-owned chroot.
-  Each assignment is a separate bind mount. Revocation removes the authorized
-  key and terminates that account's sessions. The broker restores enabled
-  assignments on boot after the storage mount. Users with multiple assignments
-  can write to each assigned directory.
+- **SFTP** requires one or more explicitly selected directories under the
+  mounted Restic area. Choose **Cheie SSH**, **Parolă**, or **Cheie SSH sau
+  parolă**. The last option accepts either credential independently. Existing
+  accounts without a configured mode keep key-only access. Upload only the
+  client-generated Ed25519 public key. Passwords must be at least 14 characters,
+  are set via the local privileged socket, and are hashed by the OS. The
+  console never stores or displays them. To reset a password, edit the account
+  and submit a new password and confirmation. Deactivation locks the local
+  password, removes the key, and terminates active sessions.
+- Connect using the displayed `bxsf-` login. Every login has a separate
+  root-owned chroot, and each assignment is a separate bind mount. The broker
+  restores enabled assignments on boot after the storage mount. Managed accounts
+  have no interactive shell, tunnel, or forwarding. OpenSSH allows three
+  authentication attempts per connection. PAM locks a managed password for
+  15 minutes after five failed attempts within 15 minutes. Key authentication
+  remains available in mixed mode when only the password is locked.
 - **SMB** uses the displayed `bxsm-` login and the existing authenticated
   `windows-backup` share and the private `home` share. Every SMB account
   gets its own directory under `bitX-BACKUP/smb-homes`. Connecting to
@@ -76,3 +85,10 @@ delete repository data.
 
 The offline recovery and migration procedures are in
 [BACKUP-SERVER.md](../docs/BACKUP-SERVER.md).
+
+To allow managed SFTP accounts from an existing Headscale IPv4 network, set
+`BITX_HEADSCALE_CIDR` to the approved subnet when installing, or run
+`sudo bash backup-server/configure-sftp-auth.sh HEADSCALE_CIDR` followed by
+`sudo systemctl reload ssh`. The script validates the candidate configuration
+with `sshd -t`. It keeps the LAN restrictions and administrator authentication
+rules. Headscale access is additionally governed by the existing tailnet ACL.

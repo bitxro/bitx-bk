@@ -1,6 +1,7 @@
 """Root-only account operations for the bitX web console."""
 
 import base64
+import grp
 import json
 import os
 import pwd
@@ -23,6 +24,9 @@ SOCKET = Path("/run/bitx-broker/control")
 UUID = os.environ["BITX_DISK_UUID"]
 NAME = re.compile(r"[a-z][a-z0-9-]{0,19}\Z")
 REPO = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}\Z")
+SFTP_MODES = {"key", "password", "either"}
+PASSWORD_GROUPS = {"password": "bx-sftp-pw", "either": "bx-sftp-either"}
+FAILLOCK = "/etc/security/bitx-sftp-faillock.conf"
 ROOT_DIR_MODE = 0o755
 
 
@@ -125,13 +129,24 @@ def os_name(name, role):
     return ("bxsf-" if role == "sftp" else "bxsm-") + name
 
 
-def revoke_sftp(login, terminate=True):
+def set_sftp_group(login, mode):
+    entry = pwd.getpwnam(login)
+    groups = {grp.getgrgid(gid).gr_name for gid in os.getgrouplist(login, entry.pw_gid)}
+    wanted = PASSWORD_GROUPS.get(mode)
+    for group in set(PASSWORD_GROUPS.values()) & groups:
+        if group != wanted:
+            run("gpasswd", "-d", login, group)
+    if wanted and wanted not in groups:
+        run("usermod", "-aG", wanted, login)
+
+
+def revoke_sftp(login):
     (KEYS / login).unlink(missing_ok=True)
-    if terminate:
-        try:
-            run("pkill", "-KILL", "-u", str(pwd.getpwnam(login).pw_uid))
-        except (KeyError, OSError):
-            pass
+    set_sftp_group(login, "key")
+    run("usermod", "--lock", login)
+    killed = subprocess.run(["pkill", "-KILL", "-u", str(pwd.getpwnam(login).pw_uid)], check=False)
+    if killed.returncode not in (0, 1):
+        raise OSError("Failed to terminate managed SFTP sessions.")
     jail = JAILS / login
     if jail.is_dir():
         for target in jail.iterdir():
@@ -142,7 +157,7 @@ def revoke_sftp(login, terminate=True):
             target.rmdir()
 
 
-def authorize_sftp(login, account):
+def authorize_sftp(login, account, password=""):
     allowed = repos()
     if not account["repositories"] or not set(account["repositories"]) <= allowed.keys():
         raise ValueError("Selectează doar directoare disponibile pe HDD.")
@@ -153,7 +168,16 @@ def authorize_sftp(login, account):
         target = jail / name
         target.mkdir(mode=0o700)
         run("mount", "--bind", str(allowed[name]), str(target))
-    atomic_write(KEYS / login, account["key"], 0o644)
+    mode = account.get("auth", "key")
+    if mode in PASSWORD_GROUPS:
+        if password:
+            run("chpasswd", secret=f"{login}:{password}\n")
+            run("faillock", "--conf", FAILLOCK, "--user", login, "--reset")
+        else:
+            run("usermod", "--unlock", login)
+        set_sftp_group(login, mode)
+    if mode in ("key", "either"):
+        atomic_write(KEYS / login, account["key"], 0o644)
 
 
 def smb_secret(login, password, create):
@@ -213,7 +237,7 @@ def account_change(data):
         new_home = None
         try:
             if role == "sftp":
-                authorize_sftp(login, old)
+                authorize_sftp(login, old, data.get("password", ""))
             else:
                 new_home = smb_home(login)
                 smb_secret(login, data["password"], create=True)
@@ -250,7 +274,7 @@ def account_change(data):
                 old["enabled"] = False
                 save(accounts)
                 try:
-                    authorize_sftp(login, changed)
+                    authorize_sftp(login, changed, data.get("password", ""))
                 except (OSError, ValueError, subprocess.TimeoutExpired):
                     revoke_sftp(login)
                     raise
@@ -285,9 +309,20 @@ def configure_sftp(data, account):
     value = data.get("key", "")
     if not isinstance(value, str) or len(value) > 1024:
         raise ValueError("Cheia publică SSH este invalidă.")
-    account["key"] = key_line(value) if value.strip() else account.get("key")
-    if not account["key"]:
-        raise ValueError("Cheia publică este obligatorie.")
+    previous = account.get("auth", "key")
+    mode = data.get("auth") or previous
+    if mode not in SFTP_MODES:
+        raise ValueError("Metodă de autentificare invalidă.")
+    password = data.get("password", "")
+    if mode in PASSWORD_GROUPS and (password or previous == "key" or not account["enabled"]):
+        validate_password(password)
+    if mode == "password":
+        account.pop("key", None)
+    else:
+        account["key"] = key_line(value) if value.strip() else account.get("key")
+        if not account["key"]:
+            raise ValueError("Cheia publică este obligatorie.")
+    account["auth"] = mode
     account["repositories"] = sorted(set(names))
 
 

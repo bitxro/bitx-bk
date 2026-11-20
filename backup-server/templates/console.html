@@ -33,12 +33,25 @@
     {% else %}<tr><td colspan="3">Nu există repository-uri locale de afișat.</td></tr>{% endfor %}</tbody>
   </table></div>
 {% endmacro %}
-{% macro row_actions(name, role, selected=[], enabled=true) %}
+{% macro sftp_auth(auth='key', editing=false) %}
+  <fieldset><legend>Metodă autentificare</legend>
+    <label>Metodă<select name="auth" required>
+      <option value="key" {% if auth == 'key' %}selected{% endif %}>Cheie SSH</option>
+      <option value="password" {% if auth == 'password' %}selected{% endif %}>Parolă</option>
+      <option value="either" {% if auth == 'either' %}selected{% endif %}>Cheie SSH sau parolă</option>
+    </select></label>
+    <label>Cheie publică Ed25519<input name="key" maxlength="1024" placeholder="ssh-ed25519 …"></label>
+    <label>Parolă<input name="password" type="password" autocomplete="new-password" minlength="14" maxlength="128"></label>
+    <label>Confirmare parolă<input name="password_confirm" type="password" autocomplete="new-password" minlength="14" maxlength="128"></label>
+    <p class="muted">{% if editing %}Lasă câmpurile necompletate pentru a păstra credențialele metodei active. Completează ambele câmpuri de parolă pentru resetare.{% else %}Completează cheia, parola sau ambele câmpuri, în funcție de metoda aleasă.{% endif %}</p>
+  </fieldset>
+{% endmacro %}
+{% macro row_actions(name, role, selected=[], enabled=true, auth='key') %}
   <details><summary>Editează</summary>
     <form method="post" action="/users">
       {{ csrf() }}<input type="hidden" name="name" value="{{ name }}"><input type="hidden" name="role" value="{{ role }}">
       {% if role == 'sftp' %}
-        <label>Cheie publică nouă (opțional)<input name="key" maxlength="1024" placeholder="ssh-ed25519 …"></label>
+        {{ sftp_auth(auth, true) }}
         {{ repository_picker(selected) }}
       {% else %}
         <label>Parolă nouă<input type="password" name="password" minlength="14" maxlength="128" autocomplete="new-password" required></label>
@@ -105,7 +118,7 @@
     <div class="table-scroll"><table><thead><tr><th>Cont de conectare</th><th>Tip</th><th>Acces</th><th>Stare</th><th>Administrare</th></tr></thead><tbody>
     {% for user in accounts|default([]) %}
       <tr><td>{{ user.login }}</td><td>{{ user.role|upper }}</td><td>{{ user.repositories|join(', ') if user.role == 'sftp' else 'home (privat), windows-backup (comun)' }}</td>
-      <td>{{ 'Activ' if user.enabled else 'Dezactivat' }}</td><td>{{ row_actions(user.name, user.role, user.repositories|default([]), user.enabled) }}</td></tr>
+      <td>{{ 'Activ' if user.enabled else 'Dezactivat' }}{% if user.role == 'sftp' %}<br><span class="muted">{{ {'key':'Cheie SSH','password':'Parolă','either':'Cheie SSH sau parolă'}[user.auth|default('key')] }}</span>{% endif %}</td><td>{{ row_actions(user.name, user.role, user.repositories|default([]), user.enabled, user.auth|default('key')) }}</td></tr>
     {% else %}<tr><td colspan="5">Nu există încă utilizatori gestionați.</td></tr>{% endfor %}
     </tbody></table></div>
     <h2>Adaugă cont</h2>
@@ -115,7 +128,7 @@
         {{ csrf() }}<input type="hidden" name="role" value="{{ role }}"><h3>{{ title }}</h3>
         <label>Nume<input name="name" pattern="[a-z][a-z0-9\-]{0,19}" maxlength="20" autocomplete="off" required></label>
         {% if role == 'sftp' %}
-          <label>Cheie publică Ed25519<input name="key" maxlength="1024" required placeholder="ssh-ed25519 …"></label>{{ repository_picker() }}
+          {{ sftp_auth() }}{{ repository_picker() }}
         {% else %}
           <label>Parolă<input name="password" type="password" autocomplete="new-password" minlength="14" maxlength="128" required></label>
         {% endif %}

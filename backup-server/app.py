@@ -205,7 +205,14 @@ def users():
         if role == "admin":
             change_admin(action, name, password)
         else:
-            broker(action, name=name, role=role, password=password if role == "smb" else "",
+            auth = request.form.get("auth", "")
+            if role == "sftp" and action in ("create", "edit"):
+                if auth not in ("key", "password", "either"):
+                    raise ValueError("Selectează o metodă de autentificare.")
+                if auth != "key" and password != request.form.get("password_confirm", ""):
+                    raise ValueError("Parolele nu coincid.")
+            broker(action, name=name, role=role, auth=auth,
+                   password=password if role == "smb" or (role == "sftp" and auth in ("password", "either")) else "",
                    key=request.form.get("key", ""), repositories=request.form.getlist("repositories"))
         result = "ok"
         flash("Operațiunea a fost salvată.", "ok")
