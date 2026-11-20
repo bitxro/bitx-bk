@@ -1,0 +1,91 @@
+:root {
+  color-scheme: light dark;
+  --base: #edf3f7;
+  --card: #fff;
+  --ink: #142436;
+  --muted: #506277;
+  --line: #cedae5;
+  --accent: #005cc4;
+  --accent-ink: #fff;
+  --selected: #e1efff;
+  --danger: #9d2440;
+  --green: #006d58;
+  font: 16px/1.55 system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --base: #0d1826;
+    --card: #162437;
+    --ink: #eff6ff;
+    --muted: #aec0d4;
+    --line: #344761;
+    --accent: #81baff;
+    --accent-ink: #0a2444;
+    --selected: #213a59;
+    --danger: #ff97b0;
+    --green: #6be0bf;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--base); color: var(--ink); }
+aside {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  inset: 0 auto 0 0;
+  width: 235px;
+  padding: 32px 22px 20px;
+  border-right: 1px solid var(--line);
+  background: var(--card);
+}
+.brand { display: grid; line-height: 1; padding: 8px 10px; width: fit-content; }
+.brand > span { font-size: 44px; font-weight: 850; letter-spacing: -.1em; }
+.brand-x { color: var(--accent); }
+.brand small { margin-top: 9px; color: var(--muted); font-weight: 650; letter-spacing: .07em; }
+nav { display: grid; gap: 4px; margin-top: 30px; }
+nav a { color: var(--muted); padding: 9px 12px; border-radius: 8px; text-decoration: none; font-weight: 600; }
+nav a:hover, nav a[aria-current] { color: var(--ink); background: var(--selected); }
+.logout { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: auto; }
+.logout span { padding-inline: 8px; overflow-wrap: anywhere; }
+.content { max-width: 1460px; margin-left: 235px; padding: clamp(18px, 5vw, 62px); }
+.login { width: min(440px, calc(100% - 32px)); margin: 12vh auto 32px; padding: clamp(22px, 5vw, 38px); background: var(--card); border: 1px solid var(--line); border-radius: 18px; }
+.login .brand { padding-left: 0; margin-bottom: 28px; }
+h1 { font-size: clamp(1.8rem, 5vw, 3.2rem); letter-spacing: -.06em; margin: 0 0 24px; }
+.login h1 { font-size: 2rem; }
+h2 { font-size: 1.2rem; margin: 26px 0 10px; }
+h3, p { margin: 0 0 10px; }
+a { color: var(--accent); }
+.muted, .measure span { color: var(--muted); }
+.storage, .service-grid, .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 12px; }
+.measure, .service-grid article, .panel { background: var(--card); padding: 16px; border: 1px solid var(--line); border-radius: 12px; }
+.measure, .service-grid article { display: grid; gap: 2px; }
+.measure strong { font-size: 1.5rem; }
+.storage progress { grid-column: 1/-1; width: 100%; height: 9px; accent-color: var(--accent); }
+.status.active, .notice.ok { color: var(--green); }
+.status.inactive, .notice.error { color: var(--danger); }
+.notice { background: var(--card); padding: 10px; border-radius: 8px; border: 1px solid currentColor; }
+.table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+table { width: 100%; border-collapse: collapse; background: var(--card); text-align: left; }
+th, td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+thead { color: var(--muted); }
+tbody tr:last-child td { border-bottom: 0; }
+label { display: grid; gap: 4px; font-weight: 600; }
+form { display: grid; gap: 10px; }
+td form { margin: 8px 0; min-width: 185px; }
+summary { cursor: pointer; color: var(--accent); }
+input:not([type=checkbox]) { width: 100%; padding: 8px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--base); color: var(--ink); font: inherit; }
+fieldset { min-width: 0; border: 1px solid var(--line); border-radius: 7px; }
+.check { display: flex; align-items: baseline; gap: 6px; overflow-wrap: anywhere; }
+button { width: fit-content; background: var(--accent); color: var(--accent-ink); border: 1px solid transparent; border-radius: 7px; padding: 7px 12px; font: inherit; font-weight: 650; cursor: pointer; }
+button:disabled { opacity: .55; cursor: default; }
+.secondary, .danger { background: var(--card); color: var(--ink); border-color: var(--line); }
+.danger { color: var(--danger); }
+.settings dt { color: var(--muted); }
+.settings dd { margin: 0 0 12px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 760px) {
+  aside { position: static; width: auto; border: 0; border-bottom: 1px solid var(--line); padding: 12px; }
+  nav { display: flex; flex-wrap: wrap; margin: 12px 0; gap: 2px; }
+  nav a { padding: 5px 8px; }
+  .content { margin-left: 0; }
+}

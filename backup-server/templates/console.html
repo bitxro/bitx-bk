@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ro">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page }} · bitX Backup Server</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='console.css') }}">
+</head>
+<body>
+{% macro csrf() %}<input type="hidden" name="csrf" value="{{ session.csrf }}">{% endmacro %}
+{% macro repository_picker(chosen=[]) %}
+  <fieldset><legend>Repository-uri autorizate</legend>
+    {% for repo in repositories|default([]) %}
+      <label class="check"><input type="checkbox" name="repositories" value="{{ repo.name }}" {% if repo.name in chosen %}checked{% endif %}>{{ repo.name }}</label>
+    {% else %}<p class="muted">HDD-ul nu are directoare de repository disponibile.</p>{% endfor %}
+  </fieldset>
+{% endmacro %}
+{% macro storage() %}
+  {% if disk %}
+    <section class="storage">
+      <div class="measure"><strong>{{ disk.total|size }}</strong><span>Capacitate</span></div>
+      <div class="measure"><strong>{{ disk.used|size }}</strong><span>Ocupat</span></div>
+      <div class="measure"><strong>{{ disk.free|size }}</strong><span>Disponibil</span></div>
+      <progress value="{{ disk.used }}" max="{{ disk.total }}" aria-label="Spațiu ocupat"></progress>
+    </section>
+  {% else %}<p>Volumul de backup este indisponibil.</p>{% endif %}
+{% endmacro %}
+{% macro repository_table() %}
+  <div class="table-scroll"><table>
+    <thead><tr><th>Repository</th><th>Ultimul snapshot</th><th>Stare</th></tr></thead>
+    <tbody>{% for repo in repositories|default([]) %}
+      <tr><td>{{ repo.name }}</td><td>{{ repo.latest or '—' }}</td><td>{{ repo.status }}</td></tr>
+    {% else %}<tr><td colspan="3">Nu există repository-uri locale de afișat.</td></tr>{% endfor %}</tbody>
+  </table></div>
+{% endmacro %}
+{% macro row_actions(name, role, selected=[], enabled=true) %}
+  <details><summary>Editează</summary>
+    <form method="post" action="/users">
+      {{ csrf() }}<input type="hidden" name="name" value="{{ name }}"><input type="hidden" name="role" value="{{ role }}">
+      {% if role == 'sftp' %}
+        <label>Cheie publică nouă (opțional)<input name="key" maxlength="1024" placeholder="ssh-ed25519 …"></label>
+        {{ repository_picker(selected) }}
+      {% else %}
+        <label>Parolă nouă<input type="password" name="password" minlength="14" maxlength="128" autocomplete="new-password" required></label>
+      {% endif %}
+      <button name="action" value="edit">Salvează și activează</button>
+    </form>
+  </details>
+  {% if role != 'admin' or name != g.user %}
+  <details><summary>Acces și ștergere</summary>
+    <form method="post" action="/users">
+      {{ csrf() }}<input type="hidden" name="name" value="{{ name }}"><input type="hidden" name="role" value="{{ role }}">
+      {% if enabled %}<button name="action" value="disable" class="secondary">Dezactivează</button>{% endif %}
+      <button name="action" value="delete" class="danger">Șterge contul</button>
+      <p class="muted">Fișierele asociate sunt păstrate.</p>
+    </form>
+  </details>
+  {% endif %}
+{% endmacro %}
+{% if page == 'Login' %}
+<main class="login">
+  <div class="brand"><span>bit<span class="brand-x">X</span></span><small>Backup Server</small></div>
+  <h1>Autentificare</h1>
+  {% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
+  <form method="post">
+    {{ csrf() }}
+    <label>Utilizator<input name="name" required maxlength="20" autofocus autocomplete="username"></label>
+    <label>Parolă<input name="password" type="password" required maxlength="128" autocomplete="current-password"></label>
+    <button>Intră în consolă</button>
+  </form>
+</main>
+{% else %}
+<aside>
+  <div class="brand"><span>bit<span class="brand-x">X</span></span><small>Backup Server</small></div>
+  <nav aria-label="Navigare principală">
+    {% for item in pages %}<a href="{{ url_for('page', name=item|lower) }}" {% if item == page %}aria-current="page"{% endif %}>{{ item }}</a>{% endfor %}
+  </nav>
+  <form method="post" action="/logout" class="logout">{{ csrf() }}<span>{{ g.user }}</span><button class="secondary">Ieșire</button></form>
+</aside>
+<main class="content">
+  <header><h1>{{ page }}</h1></header>
+  {% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
+  {% for kind,message in get_flashed_messages(with_categories=true) %}<p class="notice {{ kind }}" role="status">{{ message }}</p>{% endfor %}
+  {% if page in ('Dashboard','Storage') %}
+    <h2>Volum de backup</h2>{{ storage() }}
+    {% if page == 'Storage' and disk %}<p class="muted">Punct de montare <code>/mnt/bitx-backup</code></p>{% endif %}
+  {% endif %}
+  {% if page == 'Dashboard' %}
+    <h2>Servicii</h2><div class="service-grid">
+      {% for service,status in (services or {}).items() %}<article><span>{{ service }}</span><strong class="status {{ status }}">{{ status }}</strong></article>{% endfor %}
+    </div>
+    <h2>Repository-uri</h2>{{ repository_table() }}
+  {% elif page == 'Repositories' %}
+    {{ repository_table() }}
+  {% elif page == 'Shares' %}
+    <div class="panel"><h2>windows-backup</h2><p>SMB 3 · TCP 445</p><p>Stare smbd <strong>{{ (services or {}).get('smbd', 'indisponibil') }}</strong></p><p>Conturile se gestionează din <a href="/users">Users</a>.</p></div>
+  {% elif page == 'Users' %}
+    <h2>Administratori web</h2>
+    <div class="table-scroll"><table><thead><tr><th>Cont</th><th>Stare</th><th>Administrare</th></tr></thead><tbody>
+    {% for admin in admins %}<tr><td>{{ admin.name }}</td><td>{{ 'Activ' if admin.enabled else 'Dezactivat' }}</td>
+      <td>{{ row_actions(admin.name, 'admin', enabled=admin.enabled) }}</td></tr>{% endfor %}
+    </tbody></table></div>
+    <h2>Conturi SFTP și SMB gestionate</h2>
+    <div class="table-scroll"><table><thead><tr><th>Cont de conectare</th><th>Tip</th><th>Acces</th><th>Stare</th><th>Administrare</th></tr></thead><tbody>
+    {% for user in accounts|default([]) %}
+      <tr><td>{{ user.login }}</td><td>{{ user.role|upper }}</td><td>{{ user.repositories|join(', ') if user.role == 'sftp' else 'windows-backup' }}</td>
+      <td>{{ 'Activ' if user.enabled else 'Dezactivat' }}</td><td>{{ row_actions(user.name, user.role, user.repositories|default([]), user.enabled) }}</td></tr>
+    {% else %}<tr><td colspan="5">Nu există încă utilizatori gestionați.</td></tr>{% endfor %}
+    </tbody></table></div>
+    <h2>Adaugă cont</h2>
+    <div class="form-grid">
+    {% for role,title in [('admin','Administrator web'),('sftp','SFTP'),('smb','SMB')] %}
+      <form method="post" action="/users" class="panel">
+        {{ csrf() }}<input type="hidden" name="role" value="{{ role }}"><h3>{{ title }}</h3>
+        <label>Nume<input name="name" pattern="[a-z][a-z0-9\-]{0,19}" maxlength="20" autocomplete="off" required></label>
+        {% if role == 'sftp' %}
+          <label>Cheie publică Ed25519<input name="key" maxlength="1024" required placeholder="ssh-ed25519 …"></label>{{ repository_picker() }}
+        {% else %}
+          <label>Parolă<input name="password" type="password" autocomplete="new-password" minlength="14" maxlength="128" required></label>
+        {% endif %}
+        <button name="action" value="create" {% if role == 'sftp' and not repositories %}disabled{% endif %}>Creează cont</button>
+      </form>
+    {% endfor %}
+    </div>
+  {% elif page == 'Activity' %}
+    <div class="table-scroll"><table><thead><tr><th>Moment (UTC)</th><th>Administrator</th><th>Acțiune</th><th>Cont</th><th>Rezultat</th></tr></thead><tbody>
+    {% for event in events %}<tr><td>{{ event.at }}</td><td>{{ event.actor }}</td><td>{{ event.event }}</td><td>{{ event.target }}</td><td>{{ event.result }}</td></tr>{% else %}<tr><td colspan="5">Jurnalul este gol.</td></tr>{% endfor %}
+    </tbody></table></div>
+  {% elif page == 'Settings' %}
+    <dl class="panel settings"><dt>Temă</dt><dd>Urmează sistemul</dd><dt>Sesiune</dt><dd>Expiră la 30 de minute după conectare</dd>
+    <dt>Transport</dt><dd>HTTPS</dd><dt>Cont și parolă</dt><dd><a href="/users">Gestionează contul web</a></dd></dl>
+  {% endif %}
+</main>
+{% endif %}
+</body></html>
