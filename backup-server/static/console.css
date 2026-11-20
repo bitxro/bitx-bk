@@ -57,8 +57,8 @@ h3, p { margin: 0 0 10px; }
 a { color: var(--accent); }
 .muted, .measure span { color: var(--muted); }
 .storage, .service-grid, .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 12px; }
-.form-grid { align-items: start; gap: 18px; grid-template-columns: minmax(0, 1fr); max-width: 680px; }
-.form-grid > form { gap: 16px; padding: 20px; }
+.form-grid { align-items: start; gap: 18px; grid-template-columns: minmax(0, 1fr); }
+.form-grid > form { gap: 16px; padding: 20px; grid-template-columns: minmax(0, 638px); }
 .form-grid h3, .form-grid fieldset > p:last-child { margin-bottom: 0; }
 .form-grid fieldset { margin-inline: 0; padding: 12px; }
 .form-grid fieldset > label + label, .form-grid fieldset > label + p { margin-top: 12px; }
