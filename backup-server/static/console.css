@@ -60,6 +60,7 @@ a { color: var(--accent); }
 .form-grid { align-items: start; gap: 18px; grid-template-columns: minmax(0, 1fr); }
 .form-grid > form { gap: 16px; padding: 20px; grid-template-columns: minmax(0, 638px); }
 .form-grid > details > form { margin-top: 14px; grid-template-columns: minmax(0, 638px); }
+.nas-identity:has(select[name="auth"] option[value="password"]:checked) .sftp-public-key { display: none; }
 .form-grid h3, .form-grid fieldset > p:last-child { margin-bottom: 0; }
 .form-grid fieldset { margin-inline: 0; padding: 12px; }
 .form-grid fieldset > label + label, .form-grid fieldset > label + p { margin-top: 12px; }
