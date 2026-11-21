@@ -34,6 +34,7 @@ Configure the repository using the interactive menu (`bitx-bk` → Settings → 
 
 ```bash
 sudo bitx-bk repo-config-sftp
+sudo bitx-bk sftp-public-key   # show the key to authorize on an SFTP-only server
 # alternatively: sudo bitx-bk repo-config-local
 ```
 
@@ -43,7 +44,20 @@ The configuration is stored at:
 /etc/bitx-bk/bitx-bk.conf
 ```
 
-The repository setup creates a password file and initializes a new repository when needed. Keep the password and SFTP key available for disaster recovery.
+The repository setup creates a password file and initializes a new repository only after you confirm it for an empty directory. Keep the password and SFTP key available for disaster recovery.
+
+### SFTP-only servers and bitX Backup Server (v0.14.11)
+
+`repo-config-sftp` works with accounts restricted to `ForceCommand internal-sftp` (no shell), such as bitX Backup Server. Every check uses the SFTP subsystem; no remote command is run, and host keys stay strictly verified.
+
+1. Enter host, port and user. The dedicated key `/etc/bitx-bk/ssh/id_ed25519` is reused (created only if missing).
+2. **SFTP authentication**: `1)` installs the key with `ssh-copy-id` (usually refused by SFTP-only accounts), `2)` tests an already authorized key over SFTP, `3)` shows the public key to paste into the server (bitX Backup Server: **Users -> user -> Cheie publică Ed25519**). `sudo bitx-bk sftp-public-key` prints it too. The private key is never shown.
+3. Readable directories under `/shares` are offered (for example `/shares/restic-b1`); you can always type a path instead.
+4. **Repository layout**: `1)` use the directory directly (dedicated share), or `2)` use a hostname subdirectory (`/shares/backups/b1`) for storage shared by several servers. A trailing `/b1` is never doubled.
+5. bitx-bk checks the directory, creates and removes a temporary test directory to prove it is writable, and tells you whether it is empty (new destination), an existing Restic repository (validated with your password) or something else (refused).
+6. The final `sftp:user@host:/path` is shown before saving. A new repository is initialized only after confirmation, and switching away from an already configured destination requires typing `CHANGE`.
+
+Existing configurations are not modified. See [docs/SFTP-NAS.md](docs/SFTP-NAS.md) for errors, update steps and moving an existing repository without losing snapshots.
 
 To view the existing Restic encryption password, open **6) Settings -> 4) Show Restic encryption password**, then choose the Backup or Recovery configuration. Root access, an interactive terminal and typing `SHOW` are required. The password is read from that configuration's existing password file; it is not changed or regenerated. It appears in clear text and may remain in terminal scrollback or recordings. Store it safely outside the backed-up server. This password decrypts the repository; it is separate from the SSH key and SFTP login password. Redirection to files or pipes is refused.
 

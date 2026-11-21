@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="0.14.10"
+VERSION="0.14.11"
 CONFIG="${BITX_BK_CONFIG:-/etc/bitx-bk/bitx-bk.conf}"
 COLOR_MODE="${COLOR:-auto}"
 
@@ -200,18 +200,22 @@ restic_env(){
 
 }
 
-save_setting(){
- local key="$1" value="$2" tmp
- mkdir -p "$(dirname "$CONFIG")"
- touch "$CONFIG"
- chmod 600 "$CONFIG"
- tmp=$(mktemp)
- awk -v k="$key" '$0 !~ "^" k "=" {print}' "$CONFIG" > "$tmp"
- printf '%s=%q\n' "$key" "$value" >> "$tmp"
- cat "$tmp" > "$CONFIG"
- rm -f "$tmp"
- chmod 600 "$CONFIG"
+# Print one saved setting from $CONFIG without touching the current environment.
+config_value(){ [[ -r "$CONFIG" ]] || return 0; ( unset "$1"; source "$CONFIG" >/dev/null 2>&1; printf '%s' "${!1:-}" ); }
+
+# Atomically replace or add KEY=VALUE pairs in $CONFIG (temp file + rename).
+save_settings(){
+ local dir tmp keys="" i
+ dir=$(dirname "$CONFIG"); mkdir -p "$dir"
+ [[ -e "$CONFIG" ]] || { touch "$CONFIG"; chmod 600 "$CONFIG"; }
+ for ((i=1; i<=$#; i+=2)); do keys+="${!i} "; done
+ tmp=$(mktemp "$CONFIG.XXXXXX") || return 1
+ chmod 600 "$tmp"
+ awk -v ks="$keys" 'BEGIN{n=split(ks,a," "); for(i=1;i<=n;i++) drop[a[i]]=1} {k=$0; sub(/=.*/,"",k); if(!(k in drop)) print}' "$CONFIG" > "$tmp"
+ while (($#)); do printf '%s=%q\n' "$1" "$2" >> "$tmp"; shift 2; done
+ mv -f "$tmp" "$CONFIG"
 }
+save_setting(){ save_settings "$1" "$2"; }
 
 telegram_secret_file="/etc/bitx-bk/secrets/telegram.conf"
 
@@ -324,82 +328,366 @@ ensure_restic_password(){
  printf '%s\n' "$password_file"
 }
 
+# ---------------------------------------------------------------------------
+# SFTP destinations. Every remote operation uses the OpenSSH SFTP subsystem
+# (sftp -b / restic's sftp backend); no remote shell command is ever executed,
+# so servers with "ForceCommand internal-sftp" are supported. Host keys are
+# always verified (no StrictHostKeyChecking=no, no accept-new).
+# ---------------------------------------------------------------------------
+SFTP_KEY="${BITX_BK_SFTP_KEY:-/etc/bitx-bk/ssh/id_ed25519}"
+SFTP_TIMEOUT="${BITX_BK_SFTP_TIMEOUT:-60}"
+SFTP_STDOUT=""; SFTP_STDERR=""; SFTP_RC=0
+
+valid_sftp_host(){ [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ && ${#1} -le 253 ]]; }
+valid_sftp_user(){ [[ "$1" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ && ${#1} -le 64 ]]; }
+valid_sftp_port(){ [[ "$1" =~ ^[0-9]{1,5}$ ]] && ((10#$1 > 0 && 10#$1 <= 65535)); }
+
+# Normalise an absolute remote path; prints it or fails for unsafe input.
+normalize_remote_path(){
+ local p="$1"
+ [[ "$p" == /* ]] || return 1
+ [[ "$p" =~ [[:cntrl:]] ]] && return 1
+ while [[ "$p" == *//* ]]; do p="${p//\/\//\/}"; done
+ [[ "$p" == / ]] || p="${p%/}"
+ case "$p/" in */./*|*/../*) return 1;; esac
+ printf '%s\n' "$p"
+}
+
+# Quote one argument for an sftp batch file (double quotes, backslash escapes).
+sftp_quote(){ local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; printf '"%s"' "$s"; }
+
+# sftp_run HOST PORT USER BATCH -> SFTP_RC, SFTP_STDOUT (echo lines removed), SFTP_STDERR
+sftp_run(){
+ local host="$1" port="$2" user="$3" batch out err
+ batch=$(mktemp); out=$(mktemp); err=$(mktemp)
+ printf '%s\n' "$4" > "$batch"
+ SFTP_RC=0
+ timeout "$SFTP_TIMEOUT" sftp -b "$batch" -i "$SFTP_KEY" -P "$port" \
+  -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 \
+  -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
+  -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no \
+  "$user@$host" > "$out" 2> "$err" < /dev/null || SFTP_RC=$?
+ SFTP_STDOUT=$(grep -v '^sftp> ' "$out" || true)
+ SFTP_STDERR=$(cat "$err")
+ rm -f "$batch" "$out" "$err"
+ return "$SFTP_RC"
+}
+
+# Map an sftp failure to a category: hostkey-changed, hostkey-unknown, auth,
+# unreachable, timeout, no-sftp, missing, denied or error.
+sftp_classify(){
+ local rc="$1" text="$2"
+ if [[ "$rc" == 124 ]]; then echo timeout
+ elif [[ "$text" == *"IDENTIFICATION HAS CHANGED"* ]]; then echo hostkey-changed
+ elif [[ "$text" == *"Host key verification failed"* || "$text" == *"host key is known"* ]]; then echo hostkey-unknown
+ elif [[ "$text" == *"Permission denied (publickey"* || "$text" == *"Too many authentication failures"* || "$text" == *"Permission denied, please try again"* ]]; then echo auth
+ elif [[ "$text" =~ (Could not resolve hostname|Connection refused|No route to host|Network is unreachable|Connection timed out|Operation timed out|Name or service not known) ]]; then echo unreachable
+ elif [[ "$text" =~ (subsystem request failed|Received message too long|Connection closed|Couldn.t read packet) ]]; then echo no-sftp
+ elif [[ "$text" == *"No such file"* || "$text" == *"not a directory"* || "$text" == *"Not a directory"* ]]; then echo missing
+ elif [[ "$text" == *"Permission denied"* ]]; then echo denied
+ else echo error; fi
+}
+
+sftp_explain(){
+ local kind="$1" host="$2" port="$3" user="$4"
+ case "$kind" in
+  hostkey-changed)
+   error "The SSH host key of $host has CHANGED. bitx-bk will not connect."
+   info "If the server was reinstalled, verify the new fingerprint with its administrator, then remove the old entry: ssh-keygen -R '[$host]:$port' (or '$host' for port 22).";;
+  hostkey-unknown) error "The SSH host key of $host is not trusted yet.";;
+  auth)
+   error "Public-key authentication failed for $user@$host (the server rejected the bitx-bk key)."
+   info "Authorize the public key shown by option 3 for user '$user' on the server, then test again.";;
+  unreachable) error "Cannot reach $host:$port. Check the hostname, port, DNS and VPN (Headscale/Tailscale) connectivity.";;
+  timeout) error "The SFTP connection to $host:$port timed out after ${SFTP_TIMEOUT}s.";;
+  no-sftp) error "Connected, but the SFTP subsystem is not available for $user (or the account prints a shell banner that breaks SFTP).";;
+  missing) error "The remote directory does not exist.";;
+  denied) error "Access to the remote directory is denied for $user.";;
+  *) error "SFTP operation failed.";;
+ esac
+ [[ -n "$SFTP_STDERR" ]] && printf '        %s\n' "${SFTP_STDERR//$'\n'/$'\n'        }" >&2
+ return 0
+}
+
+# Let OpenSSH itself show the fingerprint and ask the administrator to accept
+# an unknown host key. Opens the sftp subsystem (no shell) and closes it.
+sftp_trust_host_key(){
+ local host="$1" port="$2" user="$3" answer
+ warn "Verify the fingerprint below with the server administrator before accepting it."
+ command -v ssh-keyscan >/dev/null && ssh-keyscan -p "$port" -T 10 "$host" 2>/dev/null | ssh-keygen -lf - 2>/dev/null | sed 's/^/        /' || true
+ read -r -p "Connect once so OpenSSH can ask to trust this host key? [y/N]: " answer || return 1
+ [[ "$answer" =~ ^[Yy]$ ]] || return 1
+ timeout 120 ssh -T -s -i "$SFTP_KEY" -p "$port" -o IdentitiesOnly=yes -o BatchMode=no \
+  -o StrictHostKeyChecking=ask -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no \
+  -o ConnectTimeout=15 "$user@$host" sftp < /dev/null > /dev/null || true
+}
+
+# Verify key authentication through the SFTP subsystem.
+sftp_test_auth(){
+ local host="$1" port="$2" user="$3" kind
+ info "Testing key authentication over SFTP (no remote shell)..."
+ if sftp_run "$host" "$port" "$user" '@pwd'; then ok "SFTP authentication: OK"; return 0; fi
+ kind=$(sftp_classify "$SFTP_RC" "$SFTP_STDERR")
+ if [[ "$kind" == hostkey-unknown ]]; then
+  sftp_explain "$kind" "$host" "$port" "$user"
+  sftp_trust_host_key "$host" "$port" "$user" || { info "Host key not accepted."; return 1; }
+  if sftp_run "$host" "$port" "$user" '@pwd'; then ok "SFTP authentication: OK"; return 0; fi
+  kind=$(sftp_classify "$SFTP_RC" "$SFTP_STDERR")
+ fi
+ sftp_explain "$kind" "$host" "$port" "$user"
+ return 1
+}
+
+# OpenSSH sftp exits 0 when "ls" cannot read a directory; only stderr says so.
+sftp_listing_failed(){ [[ "$SFTP_STDERR" =~ (readdir|Couldn.t read directory|Permission denied) ]]; }
+
+# Store the entries of a remote directory in SFTP_ENTRIES (one per line, without
+# . and ..). Fails with SFTP_RC/SFTP_STDERR set when missing or unreadable.
+# Not meant for $(...): the error details must stay in the caller's shell.
+SFTP_ENTRIES=""
+sftp_list(){
+ local host="$1" port="$2" user="$3" path="$4"
+ sftp_run "$host" "$port" "$user" "@cd $(sftp_quote "$path")
+@ls -1a" || return 1
+ if sftp_listing_failed; then SFTP_RC=1; return 1; fi
+ SFTP_ENTRIES=$(printf '%s\n' "$SFTP_STDOUT" | grep -vxE '\.|\.\.|' || true)
+}
+
+# List readable directories directly under /shares (discovery is a convenience,
+# not proof that the server is a bitX NAS).
+sftp_discover_shares(){
+ local host="$1" port="$2" user="$3" names name
+ sftp_run "$host" "$port" "$user" '@cd "/shares"
+@ls -1' || return 1
+ sftp_listing_failed && return 1
+ names="$SFTP_STDOUT"
+ while IFS= read -r name; do
+  [[ -n "$name" && "$name" != .* ]] || continue
+  sftp_list "$host" "$port" "$user" "/shares/$name" && printf '/shares/%s\n' "$name"
+ done <<< "$names"
+ return 0
+}
+
+# Echo empty | restic | nonempty for a readable directory.
+sftp_dir_state(){
+ local entries="$1" e have=0
+ [[ -z "$entries" ]] && { echo empty; return; }
+ for e in config data index keys snapshots; do grep -qxF "$e" <<< "$entries" && ((have+=1)); done
+ if ((have == 5)); then echo restic; else echo nonempty; fi
+}
+
+# Create and remove a uniquely named directory; never touches existing files.
+sftp_write_test(){
+ local host="$1" port="$2" user="$3" path="$4" name
+ name=".bitx-bk-write-test-$(date +%Y%m%d%H%M%S)-$$-$RANDOM"
+ if ! sftp_run "$host" "$port" "$user" "@cd $(sftp_quote "$path")
+@mkdir $(sftp_quote "$name")"; then
+  error "Check write permission: FAILED (the directory is read-only for $user or not accessible)."
+  [[ -n "$SFTP_STDERR" ]] && printf '        %s\n' "$SFTP_STDERR" >&2
+  return 1
+ fi
+ if ! sftp_run "$host" "$port" "$user" "@cd $(sftp_quote "$path")
+@rmdir $(sftp_quote "$name")"; then
+  warn "Write test succeeded, but its temporary directory could not be removed: ${path%/}/$name"
+  warn "Remove it manually; it is empty and was created by bitx-bk."
+  return 0
+ fi
+ ok "Check write permission: OK"
+}
+
+restic_sftp(){ local args="$1"; shift; restic -o "sftp.args=$args" "$@"; }
+
+# Print the repository ID of RESTIC_REPOSITORY using the given sftp args.
+restic_repo_id(){
+ local out
+ out=$(timeout 120 restic -o "sftp.args=$1" --no-lock cat config 2>/dev/null) || return 1
+ sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([0-9a-f]*\)".*/\1/p' <<< "$out" | head -1
+}
+
+sftp_show_public_key(){
+ local pub="$SFTP_KEY.pub"
+ [[ -s "$SFTP_KEY" ]] || { error "No bitx-bk SSH key exists yet."; return 1; }
+ ssh-keygen -y -f "$SFTP_KEY" > "$pub.tmp" 2>/dev/null && mv -f "$pub.tmp" "$pub" && chmod 644 "$pub" || { rm -f "$pub.tmp"; error "Cannot read the bitx-bk key."; return 1; }
+ heading "bitx-bk public SSH key (safe to share; the private key is never shown)"
+ cat "$pub"
+ info "Fingerprint: $(ssh-keygen -lf "$pub" | awk '{print $2}')"
+ info "Paste this line into the destination's authorized keys for the SFTP user"
+ info "(on bitX Backup Server: Users -> user -> Cheie publică Ed25519, method 'Cheie SSH')."
+}
+
+ensure_sftp_key(){
+ local dir; dir=$(dirname "$SFTP_KEY")
+ mkdir -p "$dir"; chmod 700 "$dir"
+ if [[ ! -s "$SFTP_KEY" ]]; then
+  ssh-keygen -q -t ed25519 -N "" -C "bitx-bk@$(hostname)" -f "$SFTP_KEY" || return 1
+  chmod 600 "$SFTP_KEY"; chmod 644 "$SFTP_KEY.pub"
+  ok "Generated dedicated SSH key."
+ else
+  info "Using existing bitx-bk SSH key: $SFTP_KEY"
+ fi
+}
+
+sftp_auth_menu(){
+ local host="$1" port="$2" user="$3" auth
+ while true; do
+  say; heading "SFTP authentication"
+  say "  1) Install SSH key automatically (ssh-copy-id, asks for the SSH password)"
+  say "  2) Key is already authorized - test SFTP"
+  say "  3) Display bitx-bk public SSH key"
+  say "  0) Cancel"; say
+  read -r -p "Select: " auth || return 1
+  case "$auth" in
+   1)
+    command -v ssh-copy-id >/dev/null || { error "ssh-copy-id is required for automatic key installation."; continue; }
+    info "Your SSH password is requested by ssh-copy-id and is NOT stored by bitx-bk."
+    info "SFTP-only accounts (for example bitX Backup Server) usually reject this; use option 3 instead."
+    if ! ssh-copy-id -i "$SFTP_KEY.pub" -p "$port" -o IdentitiesOnly=yes "$user@$host"; then
+     warn "Automatic installation failed. On SFTP-only servers add the key from option 3 in the server's interface."
+     continue
+    fi
+    sftp_test_auth "$host" "$port" "$user" && return 0;;
+   2) sftp_test_auth "$host" "$port" "$user" && return 0;;
+   3) sftp_show_public_key;;
+   0) return 1;;
+   *) warn "Invalid selection.";;
+  esac
+ done
+}
+
 configure_sftp_repo(){
  need_root
  mkdir -p "$(dirname "$CONFIG")"; chmod 700 "$(dirname "$CONFIG")"
  [[ -e "$CONFIG" ]] || { touch "$CONFIG"; chmod 600 "$CONFIG"; }
  load_config
  command -v restic >/dev/null || die "restic missing"
- command -v ssh >/dev/null || { error "OpenSSH client is required."; return 1; }
- command -v ssh-keygen >/dev/null || { error "ssh-keygen is required."; return 1; }
+ local c; for c in ssh sftp ssh-keygen; do command -v "$c" >/dev/null || { error "$c (OpenSSH client) is required."; return 1; }; done
  heading "Configure SFTP Restic repository"
- local host port user base path server_name ssh_dir key pub password_file repo sshcmd auth
- read -r -p "SFTP host/IP: " host
- read -r -p "SSH port [22]: " port; port="${port:-22}"
- read -r -p "SSH user: " user
- read -r -p "Remote base path [/$user]: " base
- base="${base:-/$user}"
- server_name=$(hostname | tr -c 'A-Za-z0-9._-' '_' | sed 's/_$//')
- path="${base%/}/$server_name"
- info "Server folder: $path"
- [[ -n "$host" && -n "$user" ]] || { error "Host and user are required."; return 1; }
- [[ "$port" =~ ^[0-9]+$ ]] || { error "Invalid SSH port."; return 1; }
- [[ "$base" == /* ]] || { error "Remote base path must be absolute."; return 1; }
+ local host port user server_name choice base path layout default_layout repo sshcmd password_file entries state
+ local -a shares=()
+ local previous previous_args previous_pw
+ # Read the saved destination from the file, not from variables an earlier menu action exported.
+ previous=$(config_value RESTIC_REPOSITORY); previous_args=$(config_value RESTIC_SFTP_ARGS); previous_pw=$(config_value RESTIC_PASSWORD_FILE)
+ read -r -p "SFTP host/IP: " host || return 1
+ read -r -p "SSH port [22]: " port || return 1; port="${port:-22}"
+ read -r -p "SSH user: " user || return 1
+ valid_sftp_host "$host" || { error "Invalid host (use a hostname or IPv4 address)."; return 1; }
+ valid_sftp_port "$port" || { error "Invalid SSH port."; return 1; }
+ valid_sftp_user "$user" || { error "Invalid SSH user."; return 1; }
+ server_name=$(hostname | tr -c 'A-Za-z0-9._-' '_' | sed 's/_*$//')
  [[ -n "$server_name" ]] || { error "Could not determine a safe server folder name."; return 1; }
 
- ssh_dir="/etc/bitx-bk/ssh"; key="$ssh_dir/id_ed25519"; pub="$key.pub"
- mkdir -p "$ssh_dir"; chmod 700 "$ssh_dir"
- if [[ ! -s "$key" ]]; then
-  ssh-keygen -q -t ed25519 -N "" -C "bitx-bk@$(hostname)" -f "$key" || return 1
-  chmod 600 "$key"; chmod 644 "$pub"
-  ok "Generated dedicated SSH key."
- else
-  info "Using existing bitx-bk SSH key."
- fi
+ ensure_sftp_key || return 1
+ sftp_auth_menu "$host" "$port" "$user" || { info "No SFTP repository settings were saved."; return 1; }
 
- say; heading "SFTP authentication"
- say "  1) Install bitx-bk key using your SSH password"
- say "  2) Key is already authorized on the server"
- say "  0) Cancel"; say
- read -r -p "Select: " auth
- case "$auth" in
-  1)
-   command -v ssh-copy-id >/dev/null || { error "ssh-copy-id is required for automatic key installation."; return 1; }
-   info "Your SSH password will be requested by ssh-copy-id and is NOT stored by bitx-bk."
-   info "Verify the server fingerprint carefully if SSH asks on first connection."
-   ssh-copy-id -i "$pub" -p "$port" "$user@$host" || { error "Could not install the SSH key."; return 1; }
-   ;;
-  2)
-   info "Using the existing authorized key."
-   ;;
-  0) return;;
-  *) error "Invalid selection."; return 1;;
+ # Destination: discovered shares or manual path.
+ say
+ if mapfile -t shares < <(sftp_discover_shares "$host" "$port" "$user") && ((${#shares[@]})); then
+  heading "Available remote directories"
+  local i; for i in "${!shares[@]}"; do say "  $((i+1))) ${shares[$i]}"; done
+  say "  $(( ${#shares[@]} + 1 ))) Enter path manually"; say
+  read -r -p "Select [1]: " choice || return 1; choice="${choice:-1}"
+  if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#shares[@]})); then
+   base="${shares[$((choice-1))]}"; default_layout=1
+  elif [[ "$choice" == "$(( ${#shares[@]} + 1 ))" ]]; then base=""
+  else error "Invalid selection."; info "No SFTP repository settings were saved."; return 1; fi
+ else
+  info "No accessible /shares directories found; enter the remote path manually."
+ fi
+ if [[ -z "${base:-}" ]]; then
+  read -r -p "Remote directory [/$user]: " base || return 1
+  base="${base:-/$user}"; default_layout=2
+ fi
+ base=$(normalize_remote_path "$base") || { error "Use a safe absolute remote path."; return 1; }
+
+ say; heading "Repository layout"
+ say "  1) Use selected directory directly (dedicated to this server)"
+ say "  2) Create/use hostname subdirectory: ${base%/}/$server_name"
+ say
+ read -r -p "Select [$default_layout]: " layout || return 1; layout="${layout:-$default_layout}"
+ case "$layout" in
+  1) layout=dedicated; path="$base";;
+  2) layout=hostname
+     if [[ "${base##*/}" == "$server_name" ]]; then
+      warn "$base already ends with /$server_name; using it directly to avoid ${base}/$server_name."
+      layout=dedicated; path="$base"
+     else path="${base%/}/$server_name"; fi;;
+  *) error "Invalid selection."; info "No SFTP repository settings were saved."; return 1;;
+ esac
+ [[ "$path" != / ]] || { error "Refusing to use the remote root directory as a repository."; return 1; }
+ repo="sftp:$user@$host:$path"
+ say; info "Final Restic repository: $repo"
+ [[ "$layout" == dedicated && "${path##*/}" != *"$server_name"* ]] && warn "Make sure $path is dedicated to this server ($server_name)."
+
+ # Directory checks (no automatic creation of parents).
+ if sftp_list "$host" "$port" "$user" "$path"; then entries="$SFTP_ENTRIES"; else
+  if [[ "$(sftp_classify "$SFTP_RC" "$SFTP_STDERR")" == missing ]]; then
+   local parent="${path%/*}"; parent="${parent:-/}"
+   if ! sftp_list "$host" "$port" "$user" "$parent"; then
+    error "Parent directory $parent is missing or not accessible; it is not created automatically."
+    info "No SFTP repository settings were saved."; return 1
+   fi
+   read -r -p "Directory $path does not exist. Create it? [y/N]: " c || return 1
+   [[ "$c" =~ ^[Yy]$ ]] || { info "No SFTP repository settings were saved."; return 1; }
+   sftp_run "$host" "$port" "$user" "@mkdir $(sftp_quote "$path")" || { sftp_explain "$(sftp_classify "$SFTP_RC" "$SFTP_STDERR")" "$host" "$port" "$user"; info "No SFTP repository settings were saved."; return 1; }
+   entries=""
+  else
+   sftp_explain "$(sftp_classify "$SFTP_RC" "$SFTP_STDERR")" "$host" "$port" "$user"
+   info "No SFTP repository settings were saved."; return 1
+  fi
+ fi
+ ok "Check directory: OK"
+ sftp_write_test "$host" "$port" "$user" "$path" || { info "No SFTP repository settings were saved."; return 1; }
+
+ sshcmd="-i $SFTP_KEY -p $port -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15"
+ password_file=$(ensure_restic_password)
+ export RESTIC_REPOSITORY="$repo" RESTIC_PASSWORD_FILE="$password_file"
+ state=$(sftp_dir_state "$entries")
+ local new_id="" old_id="" init=no
+ case "$state" in
+  empty) info "The directory is empty: this is a NEW destination (no existing snapshots).";;
+  restic)
+   info "Existing Restic repository layout found; validating with the configured password..."
+   new_id=$(restic_repo_id "$sshcmd") && [[ -n "$new_id" ]] || {
+    error "A Restic repository exists there, but it cannot be opened with $password_file (different password or damaged)."
+    info "No SFTP repository settings were saved. The repository was not modified."; return 1; }
+   ok "Existing Restic repository validated (ID ${new_id:0:12})."
+   restic_sftp "$sshcmd" --no-lock snapshots --compact 2>/dev/null | tail -n 3 || true;;
+  *)
+   error "The directory is not empty and is not a Restic repository. bitx-bk will not initialize it."
+   info "Choose an empty directory or the hostname subdirectory layout."
+   info "No SFTP repository settings were saved."; return 1;;
  esac
 
- sshcmd="-i $key -p $port -o IdentitiesOnly=yes -o BatchMode=yes"
- info "Testing passwordless SSH authentication..."
- if ! ssh -i "$key" -p "$port" -o IdentitiesOnly=yes -o BatchMode=yes "$user@$host" "true"; then
-  error "Key authentication failed."
-  info "No SFTP repository settings were saved."
-  return 1
+ if [[ -n "$previous" && "$previous" != "$repo" ]]; then
+  warn "Currently configured repository: $previous"
+  old_id=$( (export RESTIC_REPOSITORY="$previous" RESTIC_PASSWORD_FILE="${previous_pw:-$password_file}"; restic_repo_id "${previous_args:-}") 2>/dev/null || true)
+  if [[ "$state" == restic && -n "$old_id" && "$old_id" == "$new_id" ]]; then
+   info "Same repository ID as the current destination (moved/copied repository)."
+  else
+   warn "Switching changes where new backups go. Existing snapshots stay at the previous destination"
+   warn "and are NOT copied. To keep history, follow docs/SFTP-NAS.md (repository migration) first."
+   [[ -n "$old_id" && -n "$new_id" ]] && warn "Repository IDs differ: current ${old_id:0:12}, new ${new_id:0:12}."
+   read -r -p "Type CHANGE to switch the backup destination: " c || return 1
+   [[ "$c" == CHANGE ]] || { info "Cancelled. Previous settings kept."; return 1; }
+  fi
  fi
- ok "Passwordless SSH connection verified."
- info "Remote repository path will be handled through SFTP by Restic."
 
- password_file=$(ensure_restic_password)
- repo="sftp:$user@$host:$path"
- export RESTIC_REPOSITORY="$repo" RESTIC_PASSWORD_FILE="$password_file" RESTIC_SFTP_ARGS="$sshcmd"
- if restic -o "sftp.args=$sshcmd" snapshots >/dev/null 2>&1; then
-  ok "Existing Restic repository detected."
+ if [[ "$state" == empty ]]; then
+  read -r -p "Initialize a new encrypted Restic repository at $path? [y/N]: " c || return 1
+  [[ "$c" =~ ^[Yy]$ ]] || { info "Cancelled. No SFTP repository settings were saved."; return 1; }
+  init=yes
  else
-  info "Initializing encrypted Restic repository over SFTP..."
-  restic -o "sftp.args=$sshcmd" init || { error "SFTP repository initialization failed."; return 1; }
+  read -r -p "Save configuration? [Y/n]: " c || return 1
+  [[ -z "$c" || "$c" =~ ^[Yy]$ ]] || { info "Cancelled. No SFTP repository settings were saved."; return 1; }
  fi
- save_setting RESTIC_REPOSITORY "$repo"
- save_setting RESTIC_PASSWORD_FILE "$password_file"
- save_setting RESTIC_SFTP_ARGS "$sshcmd"
- ok "SFTP repository configured and verified."
- restic -o "sftp.args=$sshcmd" snapshots >/dev/null || { error "Repository verification failed."; return 1; }
+ if [[ "$init" == yes ]]; then
+  info "Initializing encrypted Restic repository over SFTP..."
+  restic_sftp "$sshcmd" init || { error "SFTP repository initialization failed."; info "No SFTP repository settings were saved."; return 1; }
+ fi
+ restic_sftp "$sshcmd" snapshots >/dev/null || { error "Repository verification failed; previous settings kept."; return 1; }
+ save_settings RESTIC_REPOSITORY "$repo" RESTIC_PASSWORD_FILE "$password_file" RESTIC_SFTP_ARGS "$sshcmd" \
+  SFTP_REPOSITORY_LAYOUT "$layout" SFTP_REPOSITORY_BASE "$base"
+ ok "SFTP repository configured and verified: $repo"
 }
 
 repository_status(){
@@ -425,7 +713,7 @@ disconnect_repository(){
  read -r -p "Disconnect this repository? [y/N]: " answer
  [[ "$answer" =~ ^[Yy]$ ]] || { info "Cancelled."; return; }
  tmp=$(mktemp)
- awk '!/^RESTIC_REPOSITORY=/ && !/^RESTIC_PASSWORD_FILE=/ && !/^RESTIC_SFTP_ARGS=/' "$CONFIG" > "$tmp"
+ awk '!/^RESTIC_REPOSITORY=/ && !/^RESTIC_PASSWORD_FILE=/ && !/^RESTIC_SFTP_ARGS=/ && !/^SFTP_REPOSITORY_(LAYOUT|BASE)=/' "$CONFIG" > "$tmp"
  cat "$tmp" > "$CONFIG"; rm -f "$tmp"; chmod 600 "$CONFIG"
  unset RESTIC_REPOSITORY RESTIC_PASSWORD_FILE RESTIC_SFTP_ARGS 2>/dev/null || true
  ok "Repository disconnected from bitx-bk."
@@ -1831,7 +2119,7 @@ usage(){
 bitx-bk v$VERSION
 Usage: bitx-bk [command]
 No command opens the interactive menu.
-Commands: doctor, discover, docker-audit, virtualmin-audit, repo-config-local, repo-config-sftp, repo-status, telegram-setup, telegram-test, backup --plan, backup, snapshots, check, update
+Commands: doctor, discover, docker-audit, virtualmin-audit, repo-config-local, repo-config-sftp, sftp-public-key, repo-status, telegram-setup, telegram-test, backup --plan, backup, snapshots, check, update
 Recovery commands: recovery-config-sftp, recovery-snapshots, recovery-restore, recovery-docker-restore, recovery-doctor
 Colors: COLOR=auto|always|never (default auto); NO_COLOR disables colors in auto mode.
 EOF
@@ -1847,6 +2135,7 @@ case "$cmd" in
  virtualmin-audit) virtualmin_audit;;
  repo-config-local) configure_local_repo;;
  repo-config-sftp) configure_sftp_repo;;
+ sftp-public-key) sftp_show_public_key;;
  telegram-setup) telegram_setup;;
  telegram-test) telegram_send "bitx-bk | $(hostname)\nTelegram test notification.";;
  repo-status) repository_status;;
