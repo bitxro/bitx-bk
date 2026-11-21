@@ -95,6 +95,12 @@ def guard():
     if request.method == "POST":
         csrf = session.get("csrf")
         if not csrf or not secrets.compare_digest(csrf, request.form.get("csrf", "")):
+            if request.endpoint == "login" and not g.user:
+                session["csrf"] = secrets.token_urlsafe()
+                return render_template(
+                    "console.html", page="Login",
+                    error="Formularul de autentificare a expirat. Introdu din nou utilizatorul și parola.",
+                ), 400
             abort(403)
     if request.endpoint not in ("login", "static") and not g.user:
         return redirect(url_for("login"))
