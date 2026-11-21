@@ -43,9 +43,27 @@ class Nas:
             raise ValueError("Directorul de stocare este indisponibil.")
         return path
 
+    def check_personal_delete(self, data, name, root):
+        self.require_disk()
+        if data.get("confirm_delete") != name:
+            raise ValueError("Pentru ștergerea datelor, confirmă numele exact al utilizatorului.")
+        if root not in (self.homes, self.b.SFTP_HOMES, self.b.SMB_HOMES):
+            raise ValueError("Directorul personal este invalid.")
+        return self.folder(root / name)
+
+    def delete_personal_directory(self, path):
+        self.require_disk()
+        self.folder(path)
+        mounts = self.b.run("findmnt", "-rn", "-o", "TARGET").splitlines()
+        if any(target == str(path) or target.startswith(f"{path}/") for target in mounts):
+            raise ValueError("Directorul are montări active.")
+        shutil.rmtree(path)
+
     def bind(self, source, target, readonly=False):
         self.folder(source)
-        target.mkdir(mode=0o700)
+        if target.is_symlink() or (target.is_dir() and any(target.iterdir())):
+            raise ValueError("Punctul de montare nu este gol.")
+        target.mkdir(mode=0o700, exist_ok=True)
         self.b.run("mount", "--bind", str(source), str(target))
         self.b.run("mount", "-o", "remount,bind,ro,nosuid,nodev,noexec" if readonly
                    else "remount,bind,rw,nosuid,nodev,noexec", str(target))
@@ -56,6 +74,16 @@ class Nas:
             if subprocess.run(["mountpoint", "-q", str(target)], check=False).returncode == 0:
                 self.b.run("umount", str(target))
             target.rmdir()
+
+    def bind_smb_home(self, source, name):
+        target = self.smb_homes / name
+        result = subprocess.run(["findmnt", "-n", "-o", "FSROOT", "--mountpoint", str(target)],
+                                capture_output=True, text=True, check=False)
+        expected = "/" + str(source.relative_to(self.b.DISK))
+        if result.returncode:
+            self.bind(source, target)
+        elif result.stdout.strip() != expected:
+            raise ValueError("Home-ul Samba are o montare neașteptată.")
 
     def revoke(self, name, home=True):
         jail = self.b.JAILS / name
@@ -81,9 +109,7 @@ class Nas:
             return
         home = self.folder(self.homes / name)
         if user["smb"]:
-            target = self.smb_homes / name
-            if not target.is_dir():
-                self.bind(home, target)
+            self.bind_smb_home(home, name)
         if not user["sftp"]:
             return
         jail = self.b.JAILS / name
@@ -158,8 +184,8 @@ class Nas:
         ]
         for name in legacy:
             source = self.b.SMB_HOMES / name
-            if source.is_dir() and not (self.smb_homes / name).is_dir():
-                self.bind(source, self.smb_homes / name)
+            if source.is_dir():
+                self.bind_smb_home(source, name)
         for name, user in state["users"].items():
             try:
                 self.revoke(name, home=False)
@@ -175,6 +201,7 @@ class Nas:
         if action == "nas_user_delete":
             if not previous:
                 raise ValueError("Utilizatorul nu există.")
+            home = self.check_personal_delete(data, name, self.homes) if data.get("delete_data") is True else None
             if previous.get("smb_created"):
                 self.b.run("smbpasswd", "-d", name)
             self.publish(state, restart=bool(previous.get("smb_created")))
@@ -187,6 +214,8 @@ class Nas:
                 share["permissions"].pop(name, None)
             self.publish(state)
             self.save(state)
+            if home is not None:
+                self.delete_personal_directory(home)
             return
         if action == "nas_user_create":
             if previous or self.b.get_local_user(name):
@@ -251,6 +280,21 @@ class Nas:
     def update_share(self, data, state, name):
         shares = state["shares"]
         old = shares.get(name)
+        if data["action"] == "nas_share_delete":
+            if not old:
+                raise ValueError("Share-ul nu există.")
+            if any(row["share"] == old["directory"] for row in state["repositories"].values()):
+                raise ValueError("Elimină întâi asocierile Restic. Fișierele vor fi păstrate.")
+            self.folder(self.shares / old["directory"])
+            del shares[name]
+            affected = sorted(old["permissions"])
+            for user in affected:
+                self.revoke(user, home=False)
+            self.publish(state, restart=bool(old["smb"] and affected))
+            self.save(state)
+            for user in affected:
+                self.expose(user, state["users"][user], state)
+            return
         new = self.valid_name(data.get("new_name") or name)
         if (new != name or old is None) and (
             new in shares or new in self.b.load_shares()

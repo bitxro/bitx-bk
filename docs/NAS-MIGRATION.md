@@ -22,6 +22,12 @@ revokes managed mounts and sessions when the configured volume's mount unit
 stops. After reconnecting a disk, verify its UUID and restart the broker,
 storage guard and Samba to reapply publication.
 
+If the HTTPS listener uses a systemd socket bound to `tailscale0`, order it
+after `tailscaled.service` and enable it under `multi-user.target`. On hosts
+where the socket's default early-boot ordering produces a dependency cycle,
+set `DefaultDependencies=no` and explicitly order the socket before, and in
+conflict with, `shutdown.target`.
+
 exFAT has no per-file POSIX ACLs. Access separation is enforced by the
 running services and mounts. Anyone with physical access to the USB drive,
 root access or a separately authorized administrative export can bypass
@@ -64,8 +70,11 @@ while new file identities use the unified model.
 
 ## Retained personal directories
 
-Deleting a unified account revokes SMB and SFTP and keeps its home on the
-HDD. An orphan directory blocks automatic reuse of the same name. To recover
+Deleting an account preserves its home by default. To permanently remove its
+personal files, the administrator must select the deletion checkbox and
+confirm the exact username. Shared directories are outside this scope.
+Removing a share revokes access and keeps its files. Remove any Restic
+association first. An orphan directory blocks automatic reuse of the same name. To recover
 data, an authorized file administrator can copy it from the retained
 directory using a trusted administration channel. To reclaim a username,
 verify the previous owner's identity, back up the orphan directory and move

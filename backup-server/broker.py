@@ -142,6 +142,13 @@ def change_destination(data):
         storage_folder(SFTP_FILES if action == "sftp_directory" else REPOS, name)
         return
     shares = load_shares()
+    if action == "smb_share_delete":
+        NAS.require_disk()
+        if name not in shares:
+            raise ValueError("Share-ul nu este gestionat de această pagină.")
+        del shares[name]
+        publish_shares(shares, disconnect=True)
+        return
     known_logins = {row["login"] for row in load_accounts().values() if row["role"] == "smb"}
     if get_local_user("bitxwindows"):
         known_logins.add("bitxwindows")
@@ -408,6 +415,11 @@ def account_change(data):
         accounts[name] = old
     elif old and old["role"] == data.get("role"):
         login, role = old["login"], old["role"]
+        delete_home = None
+        if action == "delete" and data.get("delete_data") is True:
+            if role == "sftp" and not old.get("home_provisioned"):
+                raise ValueError("Acest cont nu are un home personal de șters.")
+            delete_home = NAS.check_personal_delete(data, login, SFTP_HOMES if role == "sftp" else SMB_HOMES)
         if action in ("disable", "delete"):
             if role == "sftp":
                 revoke_sftp(login)
@@ -432,6 +444,9 @@ def account_change(data):
                 if role == "sftp":
                     (JAILS / login).rmdir()
                 del accounts[name]
+                save(accounts)
+                if delete_home is not None:
+                    NAS.delete_personal_directory(delete_home)
         elif action == "edit":
             if role == "sftp":
                 changed = dict(old)
@@ -539,7 +554,7 @@ class Handler(socketserver.StreamRequestHandler):
             elif action == "nas_view":
                 result = NAS.view(data.get("detail", ""))
             elif action in ("nas_user_create", "nas_user_edit", "nas_user_delete",
-                            "nas_share_create", "nas_share_edit", "nas_repository_set",
+                            "nas_share_create", "nas_share_edit", "nas_share_delete", "nas_repository_set",
                             "nas_repository_remove", "nas_repository_check", "nas_repository_snapshots"):
                 NAS.action(data)
                 result = None
@@ -548,7 +563,7 @@ class Handler(socketserver.StreamRequestHandler):
                 account_change(data)
                 result = None
                 print(json.dumps({"actor": actor, "action": action, "target": name, "outcome": "ok"}), flush=True)
-            elif action in ("sftp_directory", "restic_directory", "smb_share", "smb_share_edit"):
+            elif action in ("sftp_directory", "restic_directory", "smb_share", "smb_share_edit", "smb_share_delete"):
                 change_destination(data)
                 result = None
                 print(json.dumps({"actor": actor, "action": action, "target": name, "outcome": "ok"}), flush=True)

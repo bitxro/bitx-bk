@@ -212,6 +212,8 @@ def users():
                 if auth != "key" and password != request.form.get("password_confirm", ""):
                     raise ValueError("Parolele nu coincid.")
             broker(action, name=name, role=role, auth=auth,
+                   delete_data=request.form.get("delete_data") == "on",
+                   confirm_delete=request.form.get("confirm_delete", ""),
                    password=password if role == "smb" or (role == "sftp" and auth in ("password", "either")) else "",
                    key=request.form.get("key", ""), repositories=request.form.getlist("repositories"))
         result = "ok"
@@ -228,7 +230,7 @@ def users():
 def change_share():
     action = request.form.get("action")
     name = request.form.get("name", "")
-    if action not in ("sftp_directory", "restic_directory", "smb_share", "smb_share_edit") or not NAME.fullmatch(name):
+    if action not in ("sftp_directory", "restic_directory", "smb_share", "smb_share_edit", "smb_share_delete") or not NAME.fullmatch(name):
         abort(400)
     permissions = {"readers": [], "writers": []}
     for field, value in request.form.items():
@@ -276,16 +278,16 @@ def nas_change():
     name = request.form.get("name", "")
     targets = {
         "nas_user_create": "users", "nas_user_edit": "users", "nas_user_delete": "users",
-        "nas_share_create": "shares", "nas_share_edit": "shares",
+        "nas_share_create": "shares", "nas_share_edit": "shares", "nas_share_delete": "shares",
         "nas_repository_set": "repositories", "nas_repository_remove": "repositories",
         "nas_repository_check": "repositories", "nas_repository_snapshots": "repositories",
     }
     if action not in targets or not NAME.fullmatch(name):
         abort(400)
     fields = {field: request.form.get(field, "") for field in (
-        "display", "description", "new_name", "auth", "key", "password", "share", "directory", "client",
+        "display", "description", "new_name", "auth", "key", "password", "share", "directory", "client", "confirm_delete",
     )}
-    fields.update({field: request.form.get(field) == "on" for field in ("enabled", "sftp", "smb", "create")})
+    fields.update({field: request.form.get(field) == "on" for field in ("enabled", "sftp", "smb", "create", "delete_data")})
     fields["permissions"] = {field[5:]: value for field, value in request.form.items()
                              if field.startswith("perm_") and value in ("read", "write")}
     try:

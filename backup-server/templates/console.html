@@ -58,7 +58,7 @@
     <p class="muted">{% if editing %}Lasă câmpurile necompletate pentru a păstra credențialele metodei active. Completează ambele câmpuri de parolă pentru resetare.{% else %}Completează cheia, parola sau ambele câmpuri, în funcție de metoda aleasă.{% endif %}</p>
   </fieldset>
 {% endmacro %}
-{% macro row_actions(name, role, selected=[], enabled=true, auth='key') %}
+{% macro row_actions(name, role, selected=[], enabled=true, auth='key', home_login='') %}
   <details><summary>Editează</summary>
     <form method="post" action="/users">
       {{ csrf() }}<input type="hidden" name="name" value="{{ name }}"><input type="hidden" name="role" value="{{ role }}">
@@ -76,8 +76,12 @@
     <form method="post" action="/users">
       {{ csrf() }}<input type="hidden" name="name" value="{{ name }}"><input type="hidden" name="role" value="{{ role }}">
       {% if enabled %}<button name="action" value="disable" class="secondary">Dezactivează</button>{% endif %}
+      {% if home_login %}
+      <label class="check"><input type="checkbox" name="delete_data">Șterge definitiv și datele din home</label>
+      <label>Confirmă numele doar pentru ștergerea datelor<input name="confirm_delete" autocomplete="off" placeholder="{{ home_login }}"></label>
+      {% endif %}
       <button name="action" value="delete" class="danger">Șterge contul</button>
-      <p class="muted">Fișierele asociate sunt păstrate.</p>
+      <p class="muted">Datele sunt păstrate implicit.</p>
     </form>
   </details>
   {% endif %}
@@ -130,6 +134,7 @@
             {{ csrf() }}<input type="hidden" name="name" value="{{ name }}">
             {{ smb_permissions(share.readers, share.writers) }}
             <button name="action" value="smb_share_edit">Salvează accesul</button>
+            <button class="danger" name="action" value="smb_share_delete">Șterge share-ul și păstrează fișierele</button>
           </form>
         </details>
       {% endfor %}
@@ -144,7 +149,7 @@
     <div class="table-scroll"><table><thead><tr><th>Cont de conectare</th><th>Tip</th><th>Acces</th><th>Stare</th><th>Administrare</th></tr></thead><tbody>
     {% for user in accounts|default([]) %}
       <tr><td>{{ user.login }}</td><td>{{ user.role|upper }}</td><td>{{ (user.repositories|join(', ') if user.repositories else '/home (privat)') if user.role == 'sftp' else 'home (privat), windows-backup (comun)' }}</td>
-      <td>{{ 'Activ' if user.enabled else 'Dezactivat' }}{% if user.role == 'sftp' %}<br><span class="muted">{{ {'key':'Cheie SSH','password':'Parolă','either':'Cheie SSH sau parolă'}[user.auth|default('key')] }}</span>{% endif %}</td><td>{{ row_actions(user.name, user.role, user.repositories|default([]), user.enabled, user.auth|default('key')) }}</td></tr>
+      <td>{{ 'Activ' if user.enabled else 'Dezactivat' }}{% if user.role == 'sftp' %}<br><span class="muted">{{ {'key':'Cheie SSH','password':'Parolă','either':'Cheie SSH sau parolă'}[user.auth|default('key')] }}</span>{% endif %}</td><td>{{ row_actions(user.name, user.role, user.repositories|default([]), user.enabled, user.auth|default('key'), user.login if user.role == 'smb' or user.home_provisioned else '') }}</td></tr>
     {% else %}<tr><td colspan="5">Nu există încă utilizatori gestionați.</td></tr>{% endfor %}
     </tbody></table></div>
     <h2>Adaugă cont</h2>

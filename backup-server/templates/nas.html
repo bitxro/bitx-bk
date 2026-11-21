@@ -57,7 +57,9 @@
         {{ identity(user, "nas_user_edit") }}
         <form method="post" action="/nas">
           {{ csrf() }}<input type="hidden" name="name" value="{{ name }}">
-          <button class="danger" name="action" value="nas_user_delete">Șterge contul și păstrează home-ul</button>
+          {{ toggle("delete_data","Șterge definitiv și datele din home",false) }}
+          <label>Confirmă numele doar pentru ștergerea datelor<input name="confirm_delete" autocomplete="off" placeholder="{{ name }}"></label>
+          <button class="danger" name="action" value="nas_user_delete">Șterge contul</button>
         </form>
       </details>
     {% endfor %}
@@ -71,6 +73,10 @@
         <p><code>{{ share.path }}</code></p>
         {% if share.bytes is number %}<p>{{ share.bytes|size }} utilizați</p>{% endif %}
         {{ share_form(share,"nas_share_edit") }}
+        <form method="post" action="/nas">
+          {{ csrf() }}<input type="hidden" name="name" value="{{ name }}">
+          <button class="danger" name="action" value="nas_share_delete">Șterge share-ul și păstrează fișierele</button>
+        </form>
       </details>
     {% endfor %}
     {{ share_form() }}
