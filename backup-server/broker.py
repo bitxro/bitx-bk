@@ -11,7 +11,10 @@ import socketserver
 import stat
 import struct
 import subprocess
+import sys
 from pathlib import Path
+
+from nas import Nas
 
 
 STATE = Path("/var/lib/bitx-broker")
@@ -131,6 +134,8 @@ def change_destination(data):
     if not isinstance(name, str) or not NAME.fullmatch(name):
         raise ValueError("Numele trebuie să aibă maximum 20 de litere mici, cifre sau cratime.")
     if action in ("sftp_directory", "restic_directory"):
+        if NAS.config.is_file():
+            raise ValueError("Creează un share sau o asociere Restic din noua interfață.")
         existing = {entry.casefold() for entry in sftp_destinations()}
         if name == "home" or name in existing or (action == "sftp_directory" and f"files-{name}" in existing):
             raise ValueError("Numele este deja folosit de o destinație SFTP sau este rezervat.")
@@ -151,6 +156,8 @@ def change_destination(data):
     target = None
     previous = shares.get(name)
     if action == "smb_share":
+        if NAS.config.is_file():
+            raise ValueError("Creează un share unificat.")
         defined = {match.lower() for match in re.findall(r"(?m)^\[([^\]]+)\]", run("testparm", "-s"))}
         if name in defined or name in shares or name in {"global", "homes", "printers"}:
             raise ValueError("Există deja un share cu acest nume.")
@@ -297,6 +304,8 @@ def authorize_sftp(login, account, password=""):
             if not mounted() or not home.is_dir() or home.resolve() != home:
                 raise ValueError("Directorul personal SFTP este indisponibil.")
         else:
+            if NAS.config.is_file():
+                raise ValueError("Home-urile noi sunt create numai pentru utilizatori unificați.")
             home = storage_folder(SFTP_HOMES, login)
             account["home_provisioned"] = True
         assignments = [("home", home)]
@@ -362,6 +371,8 @@ def account_change(data):
     accounts = load_accounts()
     old = accounts.get(name)
     if action == "create":
+        if NAS.config.is_file():
+            raise ValueError("Creează un utilizator unificat din Users.")
         role = data.get("role")
         if old or role not in ("sftp", "smb"):
             raise ValueError("Cont deja existent sau tip de acces invalid.")
@@ -383,11 +394,14 @@ def account_change(data):
             else:
                 new_home = smb_home(login)
                 smb_secret(login, data["password"], create=True)
+                if NAS.config.is_file():
+                    NAS.bind(new_home, NAS.smb_homes / login)
         except (OSError, ValueError, subprocess.TimeoutExpired):
             if role == "sftp":
                 revoke_sftp(login)
             run("userdel", login)
             if new_home is not None:
+                NAS.unmount_home(login)
                 new_home.rmdir()
             raise
         old["enabled"] = True
@@ -403,6 +417,7 @@ def account_change(data):
             save(accounts)
             if action == "delete":
                 if role == "smb":
+                    NAS.unmount_home(login)
                     shares = load_shares()
                     changed = False
                     for share in shares.values():
@@ -478,7 +493,7 @@ def configure_sftp(data, account):
 
 
 def restore():
-    if mounted():
+    if mounted() and not NAS.config.is_file():
         homes = ["bitxwindows"]
         homes.extend(entry["login"] for entry in load_accounts().values() if entry["role"] == "smb")
         for login in homes:
@@ -521,6 +536,14 @@ class Handler(socketserver.StreamRequestHandler):
                 result = inventory()
             elif action == "list":
                 result = [{k: v for k, v in row.items() if k != "key"} for row in load_accounts().values()]
+            elif action == "nas_view":
+                result = NAS.view(data.get("detail", ""))
+            elif action in ("nas_user_create", "nas_user_edit", "nas_user_delete",
+                            "nas_share_create", "nas_share_edit", "nas_repository_set",
+                            "nas_repository_remove", "nas_repository_check", "nas_repository_snapshots"):
+                NAS.action(data)
+                result = None
+                print(json.dumps({"actor": actor, "action": action, "target": name, "outcome": "ok"}), flush=True)
             elif action in ("create", "edit", "disable", "delete"):
                 account_change(data)
                 result = None
@@ -541,11 +564,28 @@ class Handler(socketserver.StreamRequestHandler):
         self.wfile.write(json.dumps(reply).encode("utf-8") + b"\n")
 
 
+NAS = Nas(sys.modules[__name__])
+
+
 if __name__ == "__main__":
+    if sys.argv[1:] == ["revoke-storage"]:
+        subprocess.run(["systemctl", "--no-block", "stop", "smbd"], check=False)
+        for row in load_accounts().values():
+            if row["role"] == "sftp":
+                revoke_sftp(row["login"])
+        for name in NAS.load()["users"]:
+            NAS.revoke(name, home=False)
+        if NAS.smb_homes.is_dir():
+            for target in NAS.smb_homes.iterdir():
+                if subprocess.run(["mountpoint", "-q", str(target)], check=False).returncode == 0:
+                    run("umount", "-l", str(target))
+                target.rmdir()
+        sys.exit(0)
     STATE.mkdir(mode=0o700, exist_ok=True)
     JAILS.mkdir(mode=ROOT_DIR_MODE, exist_ok=True)
     JAILS.chmod(ROOT_DIR_MODE)
     restore()
+    NAS.restore()
     SOCKET.unlink(missing_ok=True)
     with socketserver.UnixStreamServer(str(SOCKET), Handler) as server:
         os.chown(SOCKET, 0, pwd.getpwnam("bitxweb").pw_gid)

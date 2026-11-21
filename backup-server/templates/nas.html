@@ -1,0 +1,127 @@
+{% macro toggle(name, label, checked) %}
+<label class="check"><input type="checkbox" name="{{ name }}" {% if checked %}checked{% endif %}>{{ label }}</label>
+{% endmacro %}
+{% macro identity(user={}, action="nas_user_create") %}
+<form method="post" action="/nas" class="panel">
+  {{ csrf() }}
+  {% if user.name %}<input type="hidden" name="name" value="{{ user.name }}">
+  {% else %}<h3>Adaugă utilizator</h3><label>Utilizator<input name="name" pattern="[a-z][a-z0-9\-]{0,19}" required></label>{% endif %}
+  <label>Nume afișat<input name="display" value="{{ user.display|default('') }}" maxlength="80"></label>
+  {{ toggle("enabled","Cont activ",user.get("enabled",true)) }}
+  {{ toggle("smb","Acces SMB",user.smb) }}
+  {{ toggle("sftp","Acces SFTP",user.sftp) }}
+  <label>Metodă SFTP<select name="auth">
+    {% for value,label in [('key','Cheie SSH'),('password','Parolă'),('either','Cheie SSH sau parolă')] %}
+    <option value="{{ value }}" {% if user.auth == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+  </select></label>
+  <label>Cheie publică Ed25519<input name="key" maxlength="1024"></label>
+  <label>Parolă nouă<input type="password" name="password" autocomplete="new-password" minlength="14" maxlength="128"></label>
+  <label>Confirmă parola<input type="password" name="password_confirm" autocomplete="new-password" minlength="14" maxlength="128"></label>
+  <button name="action" value="{{ action }}">Salvează utilizatorul</button>
+</form>
+{% endmacro %}
+{% macro share_form(share={}, action="nas_share_create") %}
+<form method="post" action="/nas" class="panel">
+  {{ csrf() }}
+  {% if share.name %}
+    <input type="hidden" name="name" value="{{ share.name }}">
+    <label>Nume share<input name="new_name" value="{{ share.name }}" pattern="[a-z][a-z0-9\-]{0,19}" required></label>
+  {% else %}
+    <h3>Adaugă share</h3><label>Nume share<input name="name" pattern="[a-z][a-z0-9\-]{0,19}" required></label>
+  {% endif %}
+  <label>Descriere<input name="description" value="{{ share.description|default('') }}" maxlength="160"></label>
+  {{ toggle("enabled","Share activ",share.get("enabled",true)) }}
+  {{ toggle("smb","SMB",share.smb) }}
+  {{ toggle("sftp","SFTP",share.sftp) }}
+  {% if share.name %}
+  <fieldset><legend>Drepturi</legend>
+    {% for name in nas.users %}
+      <label>{{ name }}<select name="perm_{{ name }}">
+        <option value="none">Fără acces</option>
+        <option value="read" {% if share.permissions.get(name) == "read" %}selected{% endif %}>Doar citire</option>
+        <option value="write" {% if share.permissions.get(name) == "write" %}selected{% endif %}>Citire și scriere</option>
+      </select></label>
+    {% else %}<p class="muted">Adaugă un utilizator din Users pentru a acorda acces.</p>{% endfor %}
+  </fieldset>
+  {% endif %}
+  <button name="action" value="{{ action }}">Salvează share-ul</button>
+</form>
+{% endmacro %}
+{% if page == 'Users' %}
+  <h2>Utilizatori de fișiere</h2>
+  <div class="form-grid">
+    {% for name,user in nas.users.items() %}
+      <details class="panel"><summary>{{ name }}{% if user.display %} · {{ user.display }}{% endif %} · {{ 'Activ' if user.enabled else 'Inactiv' }}</summary>
+        <p>Home personal · {% if user.smb %}SMB{% endif %} {% if user.sftp %}SFTP{% endif %}</p>
+        {% for share,right in user.access.items() %}<p>{{ share }} · {{ 'Doar citire' if right == 'read' else 'Citire și scriere' }}</p>{% endfor %}
+        {{ identity(user, "nas_user_edit") }}
+        <form method="post" action="/nas">
+          {{ csrf() }}<input type="hidden" name="name" value="{{ name }}">
+          <button class="danger" name="action" value="nas_user_delete">Șterge contul și păstrează home-ul</button>
+        </form>
+      </details>
+    {% endfor %}
+    {{ identity() }}
+  </div>
+{% elif page == 'Shares' %}
+  <h2>Share-uri unificate</h2>
+  <div class="form-grid">
+    {% for name,share in nas.shares.items() %}
+      <details class="panel"><summary>{{ name }} · {{ 'Activ' if share.enabled else 'Inactiv' }}</summary>
+        <p><code>{{ share.path }}</code></p>
+        {% if share.bytes is number %}<p>{{ share.bytes|size }} utilizați</p>{% endif %}
+        {{ share_form(share,"nas_share_edit") }}
+      </details>
+    {% endfor %}
+    {{ share_form() }}
+  </div>
+{% elif page == 'Repositories' %}
+  <h2>Asocieri Restic</h2>
+  <div class="form-grid">
+    {% for name,row in nas.repositories.items() %}
+      <details class="panel"><summary>{{ name }} · {{ row.share_name }}/{{ row.directory }}</summary>
+        <p>{{ 'Structură Restic detectată' if row.initialized else 'Director neinițializat sau indisponibil' }}</p>
+        <p>Client {{ row.client or '—' }} · Ultimul snapshot {{ row.latest or '—' }}</p>
+        {% if row.bytes is number %}<p>{{ row.bytes|size }} ocupați</p>{% endif %}
+        <p>Acces prin share: {{ row.access.keys()|join(', ') or 'Niciun utilizator' }}</p>
+        {% if row.check %}<p>{{ row.check }}</p>{% endif %}
+        {% if row.snapshot_error %}<p>{{ row.snapshot_error }}</p>{% endif %}
+        <form method="post" action="/nas">
+          {{ csrf() }}<input type="hidden" name="name" value="{{ name }}">
+          <button name="action" value="nas_repository_snapshots">Citește ultimul snapshot</button>
+          <button name="action" value="nas_repository_check">Verifică integritatea</button>
+          <button class="secondary" name="action" value="nas_repository_remove">Elimină asocierea</button>
+        </form>
+      </details>
+    {% endfor %}
+    <form method="post" action="/nas" class="panel">
+      {{ csrf() }}<h3>Asociază repository</h3>
+      <label>Nume<input name="name" pattern="[a-z][a-z0-9\-]{0,19}" required></label>
+      <label>Share<select name="share" required>
+        {% for share in nas.shares.values() %}<option value="{{ share.directory }}">{{ share.name }}</option>{% endfor %}
+      </select></label>
+      <label>Subdirector<input name="directory" maxlength="64" required></label>
+      <label>Client<input name="client" maxlength="80"></label>
+      {{ toggle("create","Creează subdirectorul dacă lipsește",false) }}
+      <button name="action" value="nas_repository_set" {% if not nas.shares %}disabled{% endif %}>Salvează asocierea</button>
+    </form>
+  </div>
+{% elif page == 'Dashboard' %}
+  <div class="service-grid">
+    <article><span>Utilizatori unificați</span><strong>{{ nas.users|length }}</strong></article>
+    <article><span>Share-uri unificate</span><strong>{{ nas.shares|length }}</strong></article>
+    <article><span>Asocieri Restic</span><strong>{{ nas.repositories|length }}</strong></article>
+  </div>
+  {% if nas.repositories %}
+  <h2>Ultimele snapshoturi Restic</h2>
+  <ul>{% for row in nas.repositories.values() %}<li>{{ row.name }} · {{ row.latest or 'Neconsultat' }}</li>{% endfor %}</ul>
+  {% endif %}
+{% elif page == 'Storage' and nas.volume %}
+  <dl class="panel settings">
+    <dt>Dispozitiv</dt><dd>{{ nas.volume.device }}</dd>
+    <dt>Filesystem</dt><dd>{{ nas.volume.filesystem }}</dd>
+    <dt>SMART</dt><dd>{{ nas.volume.smart }}</dd>
+  </dl>
+{% elif page == 'Settings' %}
+  <h2>Porturi active</h2><pre>{{ nas.listeners }}</pre>
+{% endif %}

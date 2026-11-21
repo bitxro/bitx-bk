@@ -25,8 +25,9 @@ for group in bx-sftp bx-smb; do
 done
 id bitxweb >/dev/null 2>&1 || useradd --system --user-group --no-create-home --shell /usr/sbin/nologin bitxweb
 install -d -m 0755 /opt/bitx-console /opt/bitx-console/templates /opt/bitx-console/static
-install -m 0644 app.py broker.py /opt/bitx-console/
+install -m 0644 app.py broker.py nas.py /opt/bitx-console/
 install -m 0644 templates/console.html /opt/bitx-console/templates/
+install -m 0644 templates/nas.html /opt/bitx-console/templates/
 install -m 0644 static/console.css /opt/bitx-console/static/
 install -d -m 0700 -o bitxweb -g bitxweb /var/lib/bitx-console
 install -d -m 0750 -o root -g bitxweb /etc/bitx-console
@@ -94,6 +95,7 @@ if updated != before:
     p.write_text(updated)
 PY
 testparm -s >/dev/null
+bash configure-nas.sh "$uuid"
 
 cat > /etc/systemd/system/bitx-broker.service <<EOF
 [Unit]

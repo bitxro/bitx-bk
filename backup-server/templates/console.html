@@ -110,24 +110,19 @@
     <h2>Volum de backup</h2>{{ storage() }}
     {% if page == 'Storage' and disk %}<p class="muted">Punct de montare <code>/mnt/bitx-backup</code></p>{% endif %}
   {% endif %}
+  {% if nas is defined %}{% include "nas.html" %}{% endif %}
   {% if page == 'Dashboard' %}
     <h2>Servicii</h2><div class="service-grid">
       {% for service,status in (services or {}).items() %}<article><span>{{ service }}</span><strong class="status {{ status }}">{{ status }}</strong></article>{% endfor %}
     </div>
-    <h2>Repository-uri</h2>{{ repository_table() }}
+    {% if repositories %}<h2>Repository-uri existente</h2>{{ repository_table() }}{% endif %}
   {% elif page == 'Repositories' %}
-    {{ repository_table() }}
+    {% if repositories %}<h2>Repository-uri existente</h2>{{ repository_table() }}{% endif %}
   {% elif page == 'Shares' %}
     <div class="panel"><h2>windows-backup</h2><p>SMB 3 · TCP 445</p><p>Stare smbd <strong>{{ (services or {}).get('smbd', 'indisponibil') }}</strong></p><p>Conturile se gestionează din <a href="/users">Users</a>.</p></div>
     <div class="panel"><h2>home</h2><p>Folder personal SMB. Aceeași cale deschide folderul contului cu care te autentifici.</p></div>
     <h2>Share-uri SMB gestionate</h2>
     <div class="form-grid">
-      <form method="post" action="/shares" class="panel">
-        {{ csrf() }}<h3>Adaugă share SMB</h3>
-        <label>Nume<input name="name" pattern="[a-z][a-z0-9\-]{0,19}" maxlength="20" required></label>
-        <p class="muted">După creare, selectează share-ul din listă pentru a-i acorda acces utilizatorilor.</p>
-        <button name="action" value="smb_share">Creează share</button>
-      </form>
       {% for name, share in (shares or {}).items() %}
         <details class="panel">
           <summary><strong>{{ name }}</strong> · {{ (share.readers|length + share.writers|length)|string + ' conturi cu acces' if share.readers or share.writers else 'Fără utilizatori' }}</summary>
@@ -139,22 +134,6 @@
         </details>
       {% endfor %}
     </div>
-    <h2>Directoare SFTP pentru fișiere</h2>
-    {% if file_destinations %}<ul>{% for name in file_destinations %}<li><code>/{{ name }}</code></li>{% endfor %}</ul>{% endif %}
-    <div class="form-grid"><form method="post" action="/shares" class="panel">
-      {{ csrf() }}<h3>Adaugă director SFTP</h3>
-      <label>Nume<input name="name" pattern="[a-z][a-z0-9\-]{0,19}" maxlength="20" required></label>
-      <p class="muted">Atribuie directorul din Users. Calea SFTP folosește exact numele introdus, de exemplu <code>/arhiva</code>.</p>
-      <button name="action" value="sftp_directory">Creează director</button>
-    </form></div>
-    <h2>Destinații Restic</h2>
-    {{ repository_table() }}
-    <div class="form-grid"><form method="post" action="/shares" class="panel">
-      {{ csrf() }}<h3>Pregătește director Restic</h3>
-      <label>Nume<input name="name" pattern="[a-z][a-z0-9\-]{0,19}" maxlength="20" required></label>
-      <p class="muted">Creează un director gol în zona Restic. Poți apoi să îl atribui unui cont SFTP din Users.</p>
-      <button name="action" value="restic_directory">Creează director</button>
-    </form></div>
   {% elif page == 'Users' %}
     <h2>Administratori web</h2>
     <div class="table-scroll"><table><thead><tr><th>Cont</th><th>Stare</th><th>Administrare</th></tr></thead><tbody>
@@ -170,18 +149,12 @@
     </tbody></table></div>
     <h2>Adaugă cont</h2>
     <div class="form-grid">
-    {% for role,title in [('admin','Administrator web'),('sftp','SFTP'),('smb','SMB')] %}
       <form method="post" action="/users" class="panel">
-        {{ csrf() }}<input type="hidden" name="role" value="{{ role }}"><h3>{{ title }}</h3>
+        {{ csrf() }}<input type="hidden" name="role" value="admin"><h3>Administrator web</h3>
         <label>Nume<input name="name" pattern="[a-z][a-z0-9\-]{0,19}" maxlength="20" autocomplete="off" required></label>
-        {% if role == 'sftp' %}
-          {{ sftp_auth() }}{{ repository_picker() }}
-        {% else %}
-          <label>Parolă<input name="password" type="password" autocomplete="new-password" minlength="14" maxlength="128" required></label>
-        {% endif %}
+        <label>Parolă<input name="password" type="password" autocomplete="new-password" minlength="14" maxlength="128" required></label>
         <button name="action" value="create">Creează cont</button>
       </form>
-    {% endfor %}
     </div>
   {% elif page == 'Activity' %}
     <div class="table-scroll"><table><thead><tr><th>Moment (UTC)</th><th>Administrator</th><th>Acțiune</th><th>Cont</th><th>Rezultat</th></tr></thead><tbody>

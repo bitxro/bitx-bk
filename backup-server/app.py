@@ -258,6 +258,8 @@ def page(name="dashboard"):
             context.update(broker("inventory"))
         if selected in ("Users", "Shares"):
             context["accounts"] = broker("list")
+        if selected in ("Dashboard", "Storage", "Users", "Shares", "Repositories", "Settings"):
+            context["nas"] = broker("nas_view", detail=selected.lower())
     except (ValueError, OSError):
         context["error"] = "Serviciul local este indisponibil."
     with database() as db:
@@ -266,6 +268,38 @@ def page(name="dashboard"):
         if selected == "Activity":
             context["events"] = db.execute("SELECT * FROM audit ORDER BY rowid DESC LIMIT 100").fetchall()
     return render_template("console.html", **context)
+
+
+@app.post("/nas")
+def nas_change():
+    action = request.form.get("action", "")
+    name = request.form.get("name", "")
+    targets = {
+        "nas_user_create": "users", "nas_user_edit": "users", "nas_user_delete": "users",
+        "nas_share_create": "shares", "nas_share_edit": "shares",
+        "nas_repository_set": "repositories", "nas_repository_remove": "repositories",
+        "nas_repository_check": "repositories", "nas_repository_snapshots": "repositories",
+    }
+    if action not in targets or not NAME.fullmatch(name):
+        abort(400)
+    fields = {field: request.form.get(field, "") for field in (
+        "display", "description", "new_name", "auth", "key", "password", "share", "directory", "client",
+    )}
+    fields.update({field: request.form.get(field) == "on" for field in ("enabled", "sftp", "smb", "create")})
+    fields["permissions"] = {field[5:]: value for field, value in request.form.items()
+                             if field.startswith("perm_") and value in ("read", "write")}
+    try:
+        if fields["password"] != request.form.get("password_confirm", ""):
+            raise ValueError("Parolele nu coincid.")
+        broker(action, name=name, **fields)
+        flash("Modificarea a fost salvată.", "ok")
+        result = "ok"
+    except (ValueError, OSError) as error:
+        flash(str(error) if isinstance(error, ValueError) else "Serviciul local este indisponibil.", "error")
+        result = "denied"
+    with database() as db:
+        audit(db, g.user, action, name, result)
+    return redirect(url_for("page", name=targets[action]))
 
 
 @app.template_filter("size")
