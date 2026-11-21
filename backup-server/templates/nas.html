@@ -2,7 +2,7 @@
 <label class="check"><input type="checkbox" name="{{ name }}" {% if checked %}checked{% endif %}>{{ label }}</label>
 {% endmacro %}
 {% macro identity(user={}, action="nas_user_create") %}
-<form method="post" action="/nas" class="panel">
+<form method="post" action="/nas" class="panel nas-identity">
   {{ csrf() }}
   {% if user.name %}<input type="hidden" name="name" value="{{ user.name }}">
   {% else %}<h3>Adaugă utilizator</h3><label>Utilizator<input name="name" pattern="[a-z][a-z0-9\-]{0,19}" required></label>{% endif %}
@@ -14,7 +14,7 @@
     {% for value,label in [('key','Cheie SSH'),('password','Parolă'),('either','Cheie SSH sau parolă')] %}
     <option value="{{ value }}" {% if user.auth == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
   </select></label>
-  <label>Cheie publică Ed25519<input name="key" maxlength="1024"></label>
+  <label class="sftp-public-key">Cheie publică Ed25519<input name="key" maxlength="1024"></label>
   <label>Parolă nouă<input type="password" name="password" autocomplete="new-password" minlength="14" maxlength="128"></label>
   <label>Confirmă parola<input type="password" name="password_confirm" autocomplete="new-password" minlength="14" maxlength="128"></label>
   <button name="action" value="{{ action }}">Salvează utilizatorul</button>
