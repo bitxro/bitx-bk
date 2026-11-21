@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import secrets
 import subprocess
 
 
@@ -246,6 +247,7 @@ class Nas:
         user = dict(name=name, display=display, smb=smb, sftp=sftp, enabled=enabled,
                     auth=mode, key=key, smb_created=old.get("smb_created", False),
                     os_password=old.get("os_password", False))
+        user["file_identity"] = old.get("file_identity") or ("existing" if previous else secrets.token_hex(16))
         if not previous:
             home = self.b.storage_folder(self.homes, name)
             try:
@@ -358,7 +360,8 @@ class Nas:
         if any(other != name and row["share"] == share["directory"] and row["directory"] == directory
                for other, row in state["repositories"].items()):
             raise ValueError("Directorul este deja asociat unui repository.")
-        state["repositories"][name] = dict(name=name, share=share["directory"], directory=directory, client=client)
+        state["repositories"][name] = dict(name=name, share=share["directory"], directory=directory,
+                                           client=client, file_identity=secrets.token_hex(16))
         self.save(state)
 
     def restic(self, row, command):

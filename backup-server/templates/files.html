@@ -1,0 +1,56 @@
+{% if g.role == 'admin' %}
+  {% if nas is defined %}
+  <div class="form-grid">
+    <form method="post" action="{{ url_for('file_access') }}" class="panel">
+      {{ csrf() }}<h2>Acces web pentru utilizatori NAS</h2>
+      <label>Utilizator<select name="name" required>{% for name in nas.users %}<option>{{ name }}</option>{% endfor %}</select></label>
+      <label>Parolă web nouă<input type="password" name="password" autocomplete="new-password" minlength="14" maxlength="128"></label>
+      <label>Confirmă parola<input type="password" name="confirmation" autocomplete="new-password" minlength="14" maxlength="128"></label>
+      <button name="action" value="enable" {% if not nas.users %}disabled{% endif %}>Activează sau resetează accesul</button>
+      <button name="action" value="disable" class="secondary" {% if not nas.users %}disabled{% endif %}>Revocă accesul web</button>
+    </form>
+    {% for name, repo in nas.repositories.items() %}
+    <form method="post" action="{{ url_for('file_access') }}" class="panel">
+      {{ csrf() }}<input type="hidden" name="name" value="{{ name }}">
+      <h2>{{ name }}</h2>
+      <fieldset><legend>Poate explora și restaura backupuri</legend>
+      {% for user in nas.users %}
+        <label class="check"><input type="checkbox" name="users" value="{{ user }}" {% if user in grants.get(name, []) %}checked{% endif %}>{{ user }}</label>
+      {% endfor %}
+      </fieldset>
+      <button name="action" value="set_grants">Salvează permisiunile Restic</button>
+    </form>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% else %}
+  <section id="file-manager" data-csrf="{{ session.csrf }}" data-api="{{ url_for('file_api') }}" data-upload="{{ url_for('file_upload') }}" data-download="{{ url_for('file_download') }}">
+    <div class="fm-toolbar">
+      <button id="fm-files">Files</button><button id="fm-backups" class="secondary">Backup Explorer</button>
+    </div>
+    <p id="fm-message" role="status" aria-live="polite"></p>
+    <div class="fm-layout">
+      <details class="panel fm-sidebar" open><summary>Locații</summary><div id="fm-roots"></div></details>
+      <section class="panel fm-main">
+        <div class="fm-toolbar">
+          <button id="fm-back" class="secondary" aria-label="Înapoi">←</button>
+          <button id="fm-forward" class="secondary" aria-label="Înainte">→</button>
+          <button id="fm-view" class="secondary">Grilă</button>
+        </div>
+        <nav id="fm-breadcrumb" class="fm-toolbar" aria-label="Locație curentă"></nav>
+        <form id="fm-filter" class="fm-toolbar">
+          <label>Caută<input id="fm-query" type="search" maxlength="100"></label>
+          <label>Sortează<select id="fm-sort"><option value="name">Nume</option><option value="type">Tip</option><option value="size">Dimensiune</option><option value="mtime">Modificat</option></select></label>
+          <button class="secondary">Aplică</button>
+        </form>
+        <div id="fm-actions" class="fm-toolbar"></div>
+        <div id="fm-entries"></div>
+        <div class="fm-toolbar"><button id="fm-prev" class="secondary">Pagina anterioară</button><button id="fm-next" class="secondary">Pagina următoare</button></div>
+        <div id="fm-jobs" aria-live="polite"></div>
+      </section>
+    </div>
+    <input type="file" id="fm-upload" multiple hidden>
+    <dialog id="fm-preview"><div id="fm-preview-content"></div><form method="dialog"><button>Închide</button></form></dialog>
+  </section>
+  <script src="{{ url_for('static', filename='files.js') }}" defer></script>
+{% endif %}

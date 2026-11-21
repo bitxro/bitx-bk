@@ -94,6 +94,7 @@
   <form method="post">
     {{ csrf() }}
     <label>Utilizator<input name="name" required maxlength="20" autofocus autocomplete="username"></label>
+    <label>Tip cont<select name="role"><option value="admin">Administrator web</option><option value="files">Cont de fișiere</option></select></label>
     <label>Parolă<input name="password" type="password" required maxlength="128" autocomplete="current-password"></label>
     <button>Intră în consolă</button>
   </form>
@@ -102,7 +103,7 @@
 <aside>
   <div class="brand"><span>bit<span class="brand-x">X</span></span><small>Backup Server</small></div>
   <nav aria-label="Navigare principală">
-    {% for item in pages %}<a href="{{ url_for('page', name=item|lower) }}" {% if item == page %}aria-current="page"{% endif %}>{{ item }}</a>{% endfor %}
+    {% for item in pages %}<a href="{{ url_for('file_manager') if item == 'File Manager' else url_for('page', name=item|lower) }}" {% if item == page %}aria-current="page"{% endif %}>{{ item }}</a>{% endfor %}
   </nav>
   <form method="post" action="/logout" class="logout">{{ csrf() }}<span>{{ g.user }}</span><button class="secondary">Ieșire</button></form>
 </aside>
@@ -110,6 +111,7 @@
   <header><h1>{{ page }}</h1></header>
   {% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
   {% for kind,message in get_flashed_messages(with_categories=true) %}<p class="notice {{ kind }}" role="status">{{ message }}</p>{% endfor %}
+  {% if page == 'File Manager' %}{% include "files.html" %}{% endif %}
   {% if page in ('Dashboard','Storage') %}
     <h2>Volum de backup</h2>{{ storage() }}
     {% if page == 'Storage' and disk %}<p class="muted">Punct de montare <code>/mnt/bitx-backup</code></p>{% endif %}

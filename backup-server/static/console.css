@@ -90,6 +90,26 @@ button:disabled { opacity: .55; cursor: default; }
 .settings dt { color: var(--muted); }
 .settings dd { margin: 0 0 12px; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.fm-layout { display: grid; grid-template-columns: minmax(145px, 1fr) minmax(0, 4fr); gap: 12px; }
+.fm-sidebar { align-self: start; overflow-wrap: anywhere; }
+.fm-sidebar button { display: block; margin-top: 6px; max-width: 100%; overflow-wrap: anywhere; }
+.fm-main { min-width: 0; }
+.fm-toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.fm-toolbar label { min-width: 0; }
+.fm-entry { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.fm-entry button { text-align: left; overflow-wrap: anywhere; }
+.fm-entry small { display: block; color: var(--muted); }
+.fm-entry details { text-align: right; }
+.fm-entry details > div { display: grid; gap: 5px; justify-items: end; }
+.fm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 195px), 1fr)); gap: 12px; }
+.fm-grid .fm-entry { padding: 8px; border: 1px solid var(--line); border-radius: 8px; }
+#fm-preview { max-width: min(92vw, 800px); background: var(--card); color: var(--ink); }
+#fm-preview img { max-width: 100%; max-height: 70vh; }
+#fm-preview pre { max-height: 60vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .fm-layout { grid-template-columns: minmax(0, 1fr); }
+  .fm-toolbar button, .fm-entry button { min-height: 42px; }
+}
 @media (max-width: 760px) {
   aside { position: static; width: auto; border: 0; border-bottom: 1px solid var(--line); padding: 12px; }
   nav { display: flex; flex-wrap: wrap; margin: 12px 0; gap: 2px; }

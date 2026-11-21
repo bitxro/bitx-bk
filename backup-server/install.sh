@@ -143,6 +143,7 @@ Restart=on-failure
 WantedBy=multi-user.target
 EOF
 runuser -u bitxweb -- /usr/bin/python3 /opt/bitx-console/app.py initialize
+bash configure-files.sh
 systemctl daemon-reload
 systemctl reload ssh smbd
 systemctl enable bitx-broker bitx-console
