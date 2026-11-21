@@ -3,7 +3,9 @@ set -euo pipefail
 [[ $# == 1 && $1 =~ ^[A-F0-9]{4}-[A-F0-9]{4}$ ]]
 test "$(findmnt -n -o UUID --mountpoint /mnt/bitx-backup)" = "$1"
 
-getent group bx-nas >/dev/null || groupadd --system bx-nas
+for group in bx-nas bx-windows-read bx-windows-write bitx-smb-admin; do
+    getent group "$group" >/dev/null || groupadd --system "$group"
+done
 id bitx-restic >/dev/null 2>&1 || useradd --system --user-group --no-create-home --shell /usr/sbin/nologin bitx-restic
 if [[ ! -e /etc/samba/bitx-nas.conf ]]; then
     install -m 0644 /dev/null /etc/samba/bitx-nas.conf
@@ -26,6 +28,29 @@ home = re.sub(r"(?m)^\s*valid users\s*=.*$", "    valid users = bitxwindows @bx-
 if "path = /srv/bitx-smb-homes/%u" not in home or "valid users = bitxwindows @bx-smb @bx-nas" not in home:
     raise SystemExit("Could not identify existing home settings.")
 updated = prefix + found + home + bracket + tail
+sections = re.split(r"(?m)(^\[[^\]\n]+\]$)", updated)
+windows = sections.index("[windows-backup]") + 1
+sections[windows] = re.sub(r"(?m)^[ \t]*(?:valid users|read only|write list|access based share enum)\s*=.*\n", "", sections[windows])
+sections[windows] = sections[windows].rstrip() + """
+    valid users = bitxwindows @bx-smb @bx-windows-read @bx-windows-write
+    read only = yes
+    write list = bitxwindows @bx-smb @bx-windows-write
+    access based share enum = yes
+
+"""
+updated = "".join(sections)
+if "[backup-admin]" not in sections:
+    updated = updated.rstrip() + """
+
+[backup-admin]
+    path = /mnt/bitx-backup/bitX-BACKUP
+    valid users = @bitx-smb-admin
+    read only = yes
+    guest ok = no
+    follow symlinks = no
+    wide links = no
+    access based share enum = yes
+"""
 include = "    include = /etc/samba/bitx-nas.conf"
 if include.strip() not in {line.strip() for line in updated.splitlines()}:
     updated = updated.rstrip() + "\n" + include + "\n"

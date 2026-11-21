@@ -35,7 +35,7 @@
   {{ toggle("sftp","SFTP",share.sftp) }}
   {% if share.name %}
   <fieldset><legend>Drepturi</legend>
-    {% for name in nas.users %}
+    {% for name in (nas.users.keys()|list + nas.smb_accounts)|unique|sort %}
       <label>{{ name }}<select name="perm_{{ name }}">
         <option value="none">Fără acces</option>
         <option value="read" {% if share.permissions.get(name) == "read" %}selected{% endif %}>Doar citire</option>
@@ -66,6 +66,29 @@
     {{ identity() }}
   </div>
 {% elif page == 'Shares' %}
+  <h2>Share-uri de sistem</h2>
+  <div class="form-grid">
+  {% for share,grants in nas.builtin_shares.items() %}
+    <details class="panel"><summary>{{ share }}</summary>
+      {% if share == 'backup-admin' %}<p>Acces administrativ doar în citire la toate directoarele de backup, inclusiv home-urile și Restic.</p>{% endif %}
+      <form method="post" action="/nas">
+        {{ csrf() }}<input type="hidden" name="name" value="{{ share }}">
+        {% for user in nas.smb_accounts %}
+          {% if share == 'windows-backup' and user in nas.legacy_windows %}
+            <p>{{ user }} · Citire și scriere (acces existent)</p>
+          {% else %}
+            <label>{{ user }}<select name="perm_{{ user }}">
+              <option value="none">Fără acces</option>
+              <option value="read" {% if grants.get(user) == 'read' %}selected{% endif %}>Doar citire</option>
+              {% if share == 'windows-backup' %}<option value="write" {% if grants.get(user) == 'write' %}selected{% endif %}>Citire și scriere</option>{% endif %}
+            </select></label>
+          {% endif %}
+        {% endfor %}
+        <button name="action" value="nas_builtin_edit">Salvează accesul</button>
+      </form>
+    </details>
+  {% endfor %}
+  </div>
   <h2>Share-uri unificate</h2>
   <div class="form-grid">
     {% for name,share in nas.shares.items() %}

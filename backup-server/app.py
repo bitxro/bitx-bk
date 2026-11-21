@@ -278,7 +278,7 @@ def nas_change():
     name = request.form.get("name", "")
     targets = {
         "nas_user_create": "users", "nas_user_edit": "users", "nas_user_delete": "users",
-        "nas_share_create": "shares", "nas_share_edit": "shares", "nas_share_delete": "shares",
+        "nas_share_create": "shares", "nas_share_edit": "shares", "nas_share_delete": "shares", "nas_builtin_edit": "shares",
         "nas_repository_set": "repositories", "nas_repository_remove": "repositories",
         "nas_repository_check": "repositories", "nas_repository_snapshots": "repositories",
     }

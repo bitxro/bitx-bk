@@ -1,6 +1,7 @@
 """Unified storage and file identities. Called only by the local root broker."""
 
 import json
+import grp
 import os
 from pathlib import Path
 import re
@@ -9,6 +10,10 @@ import subprocess
 
 
 class Nas:
+    BUILTIN_GROUPS = {
+        "windows-backup": {"read": "bx-windows-read", "write": "bx-windows-write"},
+        "backup-admin": {"read": "bitx-smb-admin"},
+    }
     def __init__(self, backend):
         self.b = backend
         self.root = backend.DISK / "bitX-BACKUP"
@@ -137,11 +142,11 @@ class Nas:
 
     def samba_config(self, state):
         parts = []
+        active = self.smb_accounts(state, enabled=True)
         for share in state["shares"].values():
             name = share["name"]
             allowed = {user: right for user, right in share["permissions"].items()
-                       if state["users"].get(user, {}).get("enabled")
-                       and state["users"][user]["smb"]}
+                       if user in active}
             if not (share["enabled"] and share["smb"] and allowed):
                 continue
             writers = sorted(user for user, right in allowed.items() if right == "write")
@@ -287,10 +292,10 @@ class Nas:
                 raise ValueError("Elimină întâi asocierile Restic. Fișierele vor fi păstrate.")
             self.folder(self.shares / old["directory"])
             del shares[name]
-            affected = sorted(old["permissions"])
+            affected = sorted(set(old["permissions"]) & state["users"].keys())
             for user in affected:
                 self.revoke(user, home=False)
-            self.publish(state, restart=bool(old["smb"] and affected))
+            self.publish(state, restart=bool(old["smb"] and old["permissions"]))
             self.save(state)
             for user in affected:
                 self.expose(user, state["users"][user], state)
@@ -308,7 +313,8 @@ class Nas:
             raise ValueError("Share-ul există deja.")
         permissions = data.get("permissions", {})
         if not isinstance(permissions, dict) or any(
-            user not in state["users"] or value not in ("read", "write") for user, value in permissions.items()
+            (user not in state["users"] and user not in self.smb_accounts(state))
+            or value not in ("read", "write") for user, value in permissions.items()
         ):
             raise ValueError("Permisiuni invalide.")
         description = data.get("description", "")
@@ -322,7 +328,7 @@ class Nas:
         shares[new] = dict(name=new, directory=old["directory"] if old else new,
                            description=description, permissions=permissions if old else {},
                            **{key: data.get(key) is True for key in ("sftp", "smb", "enabled")})
-        affected = (set(old["permissions"]) if old else set()) | set(permissions)
+        affected = ((set(old["permissions"]) if old else set()) | set(permissions)) & state["users"].keys()
         for user in sorted(affected):
             self.revoke(user, home=False)
         self.publish(state, restart=bool(old))
@@ -392,6 +398,14 @@ class Nas:
     def view(self, detail=""):
         state = self.load()
         mounted = self.b.mounted()
+        if detail == "shares":
+            state["smb_accounts"] = sorted(self.smb_accounts(state))
+            state["builtin_shares"] = {
+                name: {user: right for right, group in groups.items() if self.group_exists(group)
+                       for user in grp.getgrnam(group).gr_mem}
+                for name, groups in self.BUILTIN_GROUPS.items()
+            }
+            state["legacy_windows"] = sorted(set(grp.getgrnam("bx-smb").gr_mem) | {"bitxwindows"})
         if detail == "storage" and mounted:
             device = self.b.run("findmnt", "-n", "-o", "SOURCE", "--mountpoint", str(self.b.DISK))
             filesystem = self.b.run("findmnt", "-n", "-o", "FSTYPE", "--mountpoint", str(self.b.DISK))
@@ -421,8 +435,11 @@ class Nas:
             row["share_name"] = share.get("name", row["share"])
             row["access"] = {
                 name: right for name, right in share.get("permissions", {}).items()
-                if share.get("enabled") and state["users"].get(name, {}).get("enabled")
-                and any(share.get(protocol) and state["users"][name].get(protocol) for protocol in ("smb", "sftp"))
+                if share.get("enabled") and (
+                    (share.get("smb") and name in self.smb_accounts(state, enabled=True))
+                    or (share.get("sftp") and state["users"].get(name, {}).get("enabled")
+                        and state["users"][name].get("sftp"))
+                )
             }
             if mounted and detail == "repositories":
                 path = self.shares / row["share"] / row["directory"]
@@ -431,12 +448,56 @@ class Nas:
                     (path / part).is_dir() for part in ("data", "keys", "index", "snapshots"))
         return state
 
+    def group_exists(self, name):
+        try:
+            grp.getgrnam(name)
+        except KeyError:
+            return False
+        return True
+
+    def smb_accounts(self, state, enabled=False):
+        users = {name for name, row in state["users"].items() if row["smb"] and (row["enabled"] or not enabled)}
+        users.update(row["login"] for row in self.b.load_accounts().values()
+                     if row["role"] == "smb" and (row["enabled"] or not enabled))
+        if self.b.get_local_user("bitxwindows") and (self.b.SMB_HOMES / "bitxwindows").is_dir():
+            users.add("bitxwindows")
+        return users
+
+    def update_builtin(self, data, state, name):
+        groups = self.BUILTIN_GROUPS.get(name)
+        if groups is None or not all(self.group_exists(group) for group in groups.values()):
+            raise ValueError("Share-ul de sistem nu este configurat pentru administrare.")
+        requested = data.get("permissions")
+        valid = self.smb_accounts(state)
+        if not isinstance(requested, dict) or any(user not in valid or right not in groups for user, right in requested.items()):
+            raise ValueError("Selectează doar conturi SMB și permisiuni disponibile.")
+        if name == "windows-backup":
+            for legacy in set(grp.getgrnam("bx-smb").gr_mem) | {"bitxwindows"}:
+                requested.pop(legacy, None)
+        original = {group: set(grp.getgrnam(group).gr_mem) for group in groups.values()}
+        desired = {group: (original[group] - valid) | {user for user, value in requested.items() if value == right}
+                   for right, group in groups.items()}
+        if original == desired:
+            return
+        try:
+            for group, users in desired.items():
+                if original[group] != users:
+                    self.b.run("gpasswd", "-M", ",".join(sorted(users)), group)
+            self.b.run("systemctl", "restart", "smbd")
+        except (OSError, subprocess.TimeoutExpired):
+            for group, users in original.items():
+                self.b.run("gpasswd", "-M", ",".join(sorted(users)), group)
+            self.b.run("systemctl", "restart", "smbd")
+            raise
+
     def action(self, data):
         self.require_disk()
         name = self.valid_name(data.get("name"))
         state = self.load()
         action = data["action"]
-        if action.startswith("nas_user_"):
+        if action == "nas_builtin_edit":
+            self.update_builtin(data, state, name)
+        elif action.startswith("nas_user_"):
             self.update_user(data, state, name)
         elif action.startswith("nas_share_"):
             self.update_share(data, state, name)

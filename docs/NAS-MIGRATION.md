@@ -12,6 +12,11 @@ stays stable. Disabling a share removes publication and leaves its files and
 Restic associations in place. Changing a grant closes affected SFTP sessions
 and restarts Samba, so clients must reconnect.
 
+Use **Shares → System shares** to grant SMB access to `windows-backup` and
+`backup-admin`. The administrative export includes personal files and Restic
+data and grants read-only access. It should be assigned only to designated
+file administrators. A user's `home` remains private.
+
 SMB uses a per-account `home` and signed, encrypted authenticated shares.
 SFTP exposes writable `/home` plus `/shares/<name>` within a root-owned,
 non-writable chroot. Read-only grants are read-only Linux bind mounts for
