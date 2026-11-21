@@ -1,17 +1,72 @@
 <!doctype html>
-<html lang="ro">
+<html lang="ro" class="no-js">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>{{ page }} · bitX Backup Server</title>
+  <script src="{{ url_for('static', filename='theme.js') }}"></script>
   <link rel="stylesheet" href="{{ url_for('static', filename='console.css') }}">
 </head>
 <body>
+<svg xmlns="http://www.w3.org/2000/svg" hidden>
+  <symbol id="i-dashboard" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></symbol>
+  <symbol id="i-storage" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01M11 7.5h6M11 16.5h6"/></symbol>
+  <symbol id="i-repositories" viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="8" ry="2.5"/><path d="M4 5.5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6M4 11.5v6c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-6"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.4 3.2-5.5 6.5-5.5s5.9 2.1 6.5 5.5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.8c1.9.7 3.2 2.5 3.5 5.2"/></symbol>
+  <symbol id="i-shares" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/><circle cx="15.5" cy="13.5" r="1.6"/><circle cx="9" cy="13.5" r="1.6"/><path d="M10.6 13.5h3.3"/></symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+  <symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="m21 16-5-5-9 9"/></symbol>
+  <symbol id="i-archive" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="5" rx="1.5"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9M10 13h4"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V19a2 2 0 0 1-2 2h-4v-6H9v6H5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol>
+  <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/><path d="M12 11v5M9.5 13.5h5"/></symbol>
+  <symbol id="i-restore" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 8v8M8.5 12.5 12 16l3.5-3.5"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></symbol>
+  <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 18 9 12l6-6"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="5.5" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="12" cy="18.5" r="1.3"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></symbol>
+  <symbol id="i-auto" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l-5-5 5-5M5 12h11"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 12h18M7 8h.01M7 16h.01"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M17 6l3 3"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
+  <symbol id="i-move" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-diff" viewBox="0 0 24 24"><path d="M6 3v12M18 9v12M3 6h6M15 18h6M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></symbol>
+</svg>
+{% macro icon(name, cls='') %}<svg class="icon {{ cls }}" aria-hidden="true" focusable="false"><use href="#i-{{ name }}"/></svg>{% endmacro %}
+{% macro chev() %}<svg class="chev" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg>{% endmacro %}
+{% macro when(value, empty='—') %}{% if value %}<time datetime="{{ value }}">{{ value[:16]|replace('T', ' ') }} UTC</time>{% else %}{{ empty }}{% endif %}{% endmacro %}
+{% macro bytes(value) %}{% if value is number %}{% if value >= 1099511627776 %}{{ '%.2f'|format(value / 1099511627776) }} TiB{% elif value >= 1073741824 %}{{ '%.1f'|format(value / 1073741824) }} GiB{% elif value >= 1048576 %}{{ '%.1f'|format(value / 1048576) }} MiB{% else %}{{ '%.0f'|format(value / 1024) }} KiB{% endif %}{% else %}—{% endif %}{% endmacro %}
+{% macro service_pill(status) %}<span class="pill status {{ status }} {{ 'ok' if status == 'active' else ('danger' if status == 'failed' else 'warn') }}">{{ {'active':'Activ','inactive':'Inactiv','failed':'Eșuat','activating':'Pornește'}.get(status, status) }}</span>{% endmacro %}
+{% macro state_pill(enabled, on='Activ', off='Dezactivat') %}<span class="pill {{ 'ok' if enabled else 'plain' }}">{{ on if enabled else off }}</span>{% endmacro %}
 {% macro csrf() %}<input type="hidden" name="csrf" value="{{ session.csrf }}">{% endmacro %}
 {% macro repository_picker(chosen=[]) %}
   <fieldset><legend>Destinații SFTP autorizate</legend>
     {% for destination in sftp_destinations|default([]) %}
-      <label class="check"><input type="checkbox" name="repositories" value="{{ destination }}" {% if destination in chosen %}checked{% endif %}>{{ destination }} <small class="muted">· {{ 'Restic' if destination in (repositories|default([])|map(attribute='name')|list) else 'Fișiere' }}</small></label>
+      <label class="check"><input type="checkbox" name="repositories" value="{{ destination }}" {% if destination in chosen %}checked{% endif %}>{{ destination }} <span class="tag">{{ 'Restic' if destination in (repositories|default([])|map(attribute='name')|list) else 'Fișiere' }}</span></label>
     {% endfor %}
     <p class="muted">Dacă nu selectezi nimic, contul primește un folder privat <code>/home</code>.</p>
   </fieldset>
@@ -20,28 +75,49 @@
   <fieldset><legend>Acces la share</legend>
     {% set smb_accounts = ['bitxwindows'] + (accounts|default([])|selectattr('role', 'equalto', 'smb')|map(attribute='login')|list) %}
     {% for account in smb_accounts %}
-      <p class="muted">{{ account }}</p>
-      <label class="check"><input type="radio" name="smb_{{ account }}" value="none" {% if account not in readers and account not in writers %}checked{% endif %}>Fără acces</label>
-      <label class="check"><input type="radio" name="smb_{{ account }}" value="readers" {% if account in readers %}checked{% endif %}>Doar citire</label>
-      <label class="check"><input type="radio" name="smb_{{ account }}" value="writers" {% if account in writers %}checked{% endif %}>Citire și scriere</label>
+      <div class="perm-group" role="radiogroup" aria-label="{{ account }}">
+        <p>{{ account }}</p>
+        <div class="radio-row">
+          <label class="check"><input type="radio" name="smb_{{ account }}" value="none" {% if account not in readers and account not in writers %}checked{% endif %}>Fără acces</label>
+          <label class="check"><input type="radio" name="smb_{{ account }}" value="readers" {% if account in readers %}checked{% endif %}>Doar citire</label>
+          <label class="check"><input type="radio" name="smb_{{ account }}" value="writers" {% if account in writers %}checked{% endif %}>Citire și scriere</label>
+        </div>
+      </div>
     {% endfor %}
   </fieldset>
 {% endmacro %}
-{% macro storage() %}
+{% macro storage(detailed=false) %}
   {% if disk %}
-    <section class="storage">
-      <div class="measure"><strong>{{ disk.total|size }}</strong><span>Capacitate</span></div>
-      <div class="measure"><strong>{{ disk.used|size }}</strong><span>Ocupat</span></div>
-      <div class="measure"><strong>{{ disk.free|size }}</strong><span>Disponibil</span></div>
-      <progress value="{{ disk.used }}" max="{{ disk.total }}" aria-label="Spațiu ocupat"></progress>
+    {% set ratio = (disk.used / disk.total * 100) if disk.total else 0 %}
+    <section class="card storage" aria-labelledby="volume-title">
+      <div class="card-head"><h2 id="volume-title">{{ icon('storage') }}Volum de backup</h2>
+        <span class="pill {{ 'danger' if ratio >= 95 else ('warn' if ratio >= 85 else 'ok') }}">{{ 'Spațiu critic' if ratio >= 95 else ('Spațiu redus' if ratio >= 85 else 'Montat') }}</span></div>
+      <div class="card-body">
+        <div class="grid-stats">
+          <div class="measure"><span class="stat-label">Capacitate</span><strong class="stat-value">{{ bytes(disk.total) }}</strong></div>
+          <div class="measure"><span class="stat-label">Ocupat</span><strong class="stat-value">{{ bytes(disk.used) }}</strong></div>
+          <div class="measure"><span class="stat-label">Disponibil</span><strong class="stat-value">{{ bytes(disk.free) }}</strong></div>
+        </div>
+        <div class="meter meter-lg {{ 'full' if ratio >= 95 else ('high' if ratio >= 85 else '') }}">
+          <progress value="{{ disk.used }}" max="{{ disk.total }}" aria-label="Spațiu ocupat"></progress>
+          <div class="meter-legend"><span>{{ '%.0f'|format(ratio) }}% ocupat</span><span>{{ disk.used|size }} din {{ disk.total|size }}</span></div>
+        </div>
+        {% if detailed %}<p class="muted small">Punct de montare <code>/mnt/bitx-backup</code></p>{% endif %}
+      </div>
     </section>
-  {% else %}<p>Volumul de backup este indisponibil.</p>{% endif %}
+  {% else %}
+    <section class="card" aria-labelledby="volume-title">
+      <div class="card-head"><h2 id="volume-title">{{ icon('storage') }}Volum de backup</h2><span class="pill danger">Indisponibil</span></div>
+      <div class="empty">{{ icon('alert') }}<strong>Volumul de backup este indisponibil.</strong><span>Verifică dacă discul USB este conectat și montat, apoi reîncarcă pagina.</span></div>
+    </section>
+  {% endif %}
 {% endmacro %}
 {% macro repository_table() %}
-  <div class="table-scroll"><table>
+  <div class="table-scroll"><table class="stack-table">
     <thead><tr><th>Repository</th><th>Ultimul snapshot</th><th>Stare</th></tr></thead>
     <tbody>{% for repo in repositories|default([]) %}
-      <tr><td>{{ repo.name }}</td><td>{{ repo.latest or '—' }}</td><td>{{ repo.status }}</td></tr>
+      <tr><td data-label="Repository"><span class="strong">{{ repo.name }}</span></td><td data-label="Ultimul snapshot">{{ when(repo.latest) }}</td>
+        <td data-label="Stare"><span class="pill {{ 'ok' if repo.status == 'Verificat' else ('danger' if 'eșuat' in repo.status else 'warn') }}">{{ repo.status }}</span></td></tr>
     {% else %}<tr><td colspan="3">Nu există repository-uri locale de afișat.</td></tr>{% endfor %}</tbody>
   </table></div>
 {% endmacro %}
@@ -59,118 +135,237 @@
   </fieldset>
 {% endmacro %}
 {% macro row_actions(name, role, selected=[], enabled=true, auth='key', home_login='') %}
-  <details><summary>Editează</summary>
+  <details class="inline-details"><summary>{{ icon('edit', 'icon-s') }}Editează</summary>
     <form method="post" action="/users">
       {{ csrf() }}<input type="hidden" name="name" value="{{ name }}"><input type="hidden" name="role" value="{{ role }}">
       {% if role == 'sftp' %}
         {{ sftp_auth(auth, true) }}
         {{ repository_picker(selected) }}
       {% else %}
-        <label>Parolă nouă<input type="password" name="password" minlength="14" maxlength="128" autocomplete="new-password" required></label>
+        <label>Parolă nouă<input type="password" name="password" minlength="14" maxlength="128" autocomplete="new-password" required><span class="hint">Între 14 și 128 de caractere.</span></label>
       {% endif %}
       <button name="action" value="edit">Salvează și activează</button>
     </form>
   </details>
   {% if role != 'admin' or name != g.user %}
-  <details><summary>Acces și ștergere</summary>
-    <form method="post" action="/users">
+  <details class="inline-details"><summary>{{ icon('lock', 'icon-s') }}Acces și ștergere</summary>
+    <form method="post" action="/users" class="danger-zone">
       {{ csrf() }}<input type="hidden" name="name" value="{{ name }}"><input type="hidden" name="role" value="{{ role }}">
       {% if enabled %}<button name="action" value="disable" class="secondary">Dezactivează</button>{% endif %}
       {% if home_login %}
       <label class="check"><input type="checkbox" name="delete_data">Șterge definitiv și datele din home</label>
       <label>Confirmă numele doar pentru ștergerea datelor<input name="confirm_delete" autocomplete="off" placeholder="{{ home_login }}"></label>
       {% endif %}
-      <button name="action" value="delete" class="danger">Șterge contul</button>
-      <p class="muted">Datele sunt păstrate implicit.</p>
+      <button name="action" value="delete" class="danger" data-confirm="Ștergi contul {{ name }}?">Șterge contul</button>
+      <p class="muted small">Datele sunt păstrate implicit.</p>
     </form>
   </details>
   {% endif %}
 {% endmacro %}
+{% set page_icons = {'Dashboard':'dashboard','Storage':'storage','Repositories':'repositories','Users':'users','Shares':'shares','Activity':'activity','Settings':'settings','File Manager':'folder'} %}
+{% set page_leads = {
+  'Dashboard': 'Starea serverului, a volumului de backup și a serviciilor.',
+  'Storage': 'Capacitatea volumului USB de backup și starea discului.',
+  'Repositories': 'Asocieri Restic, ultimele snapshoturi și verificări de integritate.',
+  'Users': 'Utilizatori de fișiere, administratori web și conturi existente.',
+  'Shares': 'Foldere partajate prin SMB și SFTP și drepturile de acces.',
+  'Activity': 'Jurnal de audit: ultimele 100 de evenimente.',
+  'Settings': 'Sesiune, transport, aspect și porturi active.',
+  'File Manager': ('Fișierele tale și backupurile Restic autorizate.' if g.role == 'files' else 'Acces web la fișiere și permisiuni pentru Backup Explorer.'),
+} %}
+{% macro theme_switch() %}
+  <div class="theme-switch" role="group" aria-label="Temă">
+    <button type="button" data-theme-set="auto" aria-pressed="true" title="Urmează sistemul">{{ icon('auto', 'icon-s') }}<span class="sr-only">Automat</span></button>
+    <button type="button" data-theme-set="light" aria-pressed="false" title="Luminos">{{ icon('sun', 'icon-s') }}<span class="sr-only">Luminos</span></button>
+    <button type="button" data-theme-set="dark" aria-pressed="false" title="Întunecat">{{ icon('moon', 'icon-s') }}<span class="sr-only">Întunecat</span></button>
+  </div>
+{% endmacro %}
 {% if page == 'Login' %}
+<div class="auth">
 <main class="login">
-  <div class="brand"><span>bit<span class="brand-x">X</span></span><small>Backup Server</small></div>
-  <h1>Autentificare</h1>
+  <div class="brand"><span class="brand-mark" aria-hidden="true">X</span><span class="brand-text"><strong>bit<span class="brand-x">X</span></strong><small>Backup Server</small></span></div>
+  <div>
+    <h1>Autentificare</h1>
+    <p class="lead">Conectează-te la consola de administrare sau la fișierele tale.</p>
+  </div>
   {% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
   <form method="post">
     {{ csrf() }}
-    <label>Utilizator<input name="name" required maxlength="20" autofocus autocomplete="username"></label>
-    <label>Tip cont<select name="role"><option value="admin">Administrator web</option><option value="files">Cont de fișiere</option></select></label>
+    <fieldset class="segmented" aria-label="Tip cont">
+      <label><input type="radio" name="role" value="admin" checked>{{ icon('shield', 'icon-s') }}Administrator web</label>
+      <label><input type="radio" name="role" value="files">{{ icon('folder', 'icon-s') }}Cont de fișiere</label>
+    </fieldset>
+    <label>Utilizator<input name="name" required maxlength="20" autofocus autocomplete="username" autocapitalize="none" spellcheck="false"></label>
     <label>Parolă<input name="password" type="password" required maxlength="128" autocomplete="current-password"></label>
-    <button>Intră în consolă</button>
+    <button type="submit">Intră în consolă</button>
   </form>
+  <div class="auth-foot"><span>{{ icon('lock', 'icon-s') }}Conexiune HTTPS</span><span>Sesiunea expiră după 30 de minute</span></div>
 </main>
+</div>
 {% else %}
-<aside>
-  <div class="brand"><span>bit<span class="brand-x">X</span></span><small>Backup Server</small></div>
-  <nav aria-label="Navigare principală">
-    {% for item in pages %}<a href="{{ url_for('file_manager') if item == 'File Manager' else url_for('page', name=item|lower) }}" {% if item == page %}aria-current="page"{% endif %}>{{ item }}</a>{% endfor %}
+<a class="skip" href="#content">Sari la conținut</a>
+<header class="topbar">
+  <button type="button" id="nav-toggle" class="ghost icon-btn" aria-controls="sidebar" aria-expanded="false">{{ icon('menu') }}<span class="sr-only">Meniu</span></button>
+  <span class="title">{{ page }}</span>
+  {{ theme_switch() }}
+</header>
+<aside class="sidebar" id="sidebar">
+  <a class="brand" href="{{ url_for('file_manager') if g.role == 'files' else url_for('page', name='dashboard') }}"><span class="brand-mark" aria-hidden="true">X</span><span class="brand-text"><strong>bit<span class="brand-x">X</span></strong><small>Backup Server</small></span></a>
+  <nav class="nav" aria-label="Navigare principală">
+    {% for item in pages %}
+      {% if item == 'Users' %}<span class="nav-label">Administrare</span>{% elif item == 'Activity' %}<span class="nav-label">Sistem</span>{% elif item == 'File Manager' and pages|length > 1 %}<span class="nav-label">Fișiere</span>{% elif loop.first %}<span class="nav-label">{{ 'Fișiere' if pages|length == 1 else 'Prezentare' }}</span>{% endif %}
+      <a href="{{ url_for('file_manager') if item == 'File Manager' else url_for('page', name=item|lower) }}" {% if item == page %}aria-current="page"{% endif %}>{{ icon(page_icons.get(item, 'folder')) }}<span>{{ item }}</span></a>
+    {% endfor %}
   </nav>
-  <form method="post" action="/logout" class="logout">{{ csrf() }}<span>{{ g.user }}</span><button class="secondary">Ieșire</button></form>
+  <form method="post" action="/logout" class="account logout">{{ csrf() }}
+    <span class="avatar" aria-hidden="true">{{ (g.user or '?')[:1] }}</span>
+    <span class="who"><strong>{{ g.user }}</strong><small>{{ 'Cont de fișiere' if g.role == 'files' else 'Administrator web' }}</small></span>
+    <button class="ghost icon-btn" title="Ieșire">{{ icon('logout') }}<span class="sr-only">Ieșire</span></button>
+  </form>
 </aside>
-<main class="content">
-  <header><h1>{{ page }}</h1></header>
+<div class="scrim" aria-hidden="true"></div>
+<div class="main">
+<main class="content" id="content">
+  <header class="page-head">
+    <div><h1>{{ page }}</h1><p>{{ page_leads.get(page, '') }}</p></div>
+    <div class="actions">{{ theme_switch() }}</div>
+  </header>
   {% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
   {% for kind,message in get_flashed_messages(with_categories=true) %}<p class="notice {{ kind }}" role="status">{{ message }}</p>{% endfor %}
   {% if page == 'File Manager' %}{% include "files.html" %}{% endif %}
-  {% if page in ('Dashboard','Storage') %}
-    <h2>Volum de backup</h2>{{ storage() }}
-    {% if page == 'Storage' and disk %}<p class="muted">Punct de montare <code>/mnt/bitx-backup</code></p>{% endif %}
+  {% if page == 'Dashboard' %}
+    {% set svc = (services or {}) %}
+    {% set svc_ok = svc.values()|select('equalto', 'active')|list|length %}
+    <section class="grid-stats" aria-label="Rezumat">
+      <article class="card stat stat-wide">
+        <span class="stat-label">{{ icon('storage') }}Volum de backup</span>
+        {% if disk %}{% set ratio = (disk.used / disk.total * 100) if disk.total else 0 %}
+          <strong class="stat-value">{{ bytes(disk.free) }} <small>disponibili</small></strong>
+          <div class="meter {{ 'full' if ratio >= 95 else ('high' if ratio >= 85 else '') }}"><progress value="{{ disk.used }}" max="{{ disk.total }}" aria-label="Spațiu ocupat"></progress>
+          <div class="meter-legend"><span>{{ '%.0f'|format(ratio) }}% ocupat</span><span>{{ bytes(disk.used) }} / {{ bytes(disk.total) }}</span></div></div>
+        {% else %}<strong class="stat-value">—</strong><span class="pill danger">Volum indisponibil</span>{% endif %}
+      </article>
+      <article class="card stat">
+        <span class="stat-label">{{ icon('server') }}Servicii</span>
+        <strong class="stat-value">{{ svc_ok }}<small> / {{ svc|length }} active</small></strong>
+        {% if svc and svc_ok == svc|length %}<span class="pill ok">Toate funcționează</span>{% elif svc %}<span class="pill warn">Necesită atenție</span>{% else %}<span class="pill plain">Necunoscut</span>{% endif %}
+      </article>
+      {% if nas is defined %}
+      <article class="card stat"><span class="stat-label">{{ icon('users') }}Utilizatori unificați</span><strong class="stat-value">{{ nas.users|length }}</strong>
+        <span class="stat-foot">{{ nas.users.values()|selectattr('enabled')|list|length }} activi</span></article>
+      <article class="card stat"><span class="stat-label">{{ icon('shares') }}Share-uri unificate</span><strong class="stat-value">{{ nas.shares|length }}</strong>
+        <span class="stat-foot">{{ nas.shares.values()|selectattr('enabled')|list|length }} publicate</span></article>
+      <article class="card stat"><span class="stat-label">{{ icon('repositories') }}Asocieri Restic</span><strong class="stat-value">{{ nas.repositories|length }}</strong>
+        <span class="stat-foot">{{ nas.repositories.values()|selectattr('latest')|list|length }} cu snapshot cunoscut</span></article>
+      {% endif %}
+    </section>
+    <div class="grid-2">
+      <section class="card" aria-labelledby="svc-title">
+        <div class="card-head"><h2 id="svc-title">{{ icon('server') }}Servicii</h2></div>
+        <ul class="list service-grid">
+          {% for service,status in svc.items() %}<li><span class="name"><span>{{ service }}</span></span>{{ service_pill(status) }}</li>
+          {% else %}<li class="muted">Starea serviciilor nu este disponibilă.</li>{% endfor %}
+        </ul>
+      </section>
+      <section class="card" aria-labelledby="snap-title">
+        <div class="card-head"><h2 id="snap-title">{{ icon('history') }}Ultimele snapshoturi Restic</h2><a href="{{ url_for('page', name='repositories') }}" class="small">Repositories</a></div>
+        <ul class="list">
+          {% if nas is defined %}{% for row in nas.repositories.values() %}
+            <li><span class="name"><span class="thumb repo">{{ icon('repositories', 'icon-s') }}</span><span>{{ row.name }}<br><small class="subtle">{{ row.share_name }}/{{ row.directory }}</small></span></span><span class="small muted">{{ when(row.latest, 'Neconsultat') }}</span></li>
+          {% endfor %}{% endif %}
+          {% for repo in repositories|default([]) %}
+            <li><span class="name"><span class="thumb muted-thumb">{{ icon('repositories', 'icon-s') }}</span><span>{{ repo.name }}<br><small class="subtle">{{ repo.status }}</small></span></span><span class="small muted">{{ when(repo.latest) }}</span></li>
+          {% endfor %}
+          {% if not repositories and (nas is not defined or not nas.repositories) %}<li class="muted">Nu există repository-uri de afișat.</li>{% endif %}
+        </ul>
+      </section>
+    </div>
+  {% elif page == 'Storage' %}
+    {{ storage(true) }}
+  {% endif %}
+  {% if page == 'Settings' %}
+    <div class="grid-2">
+      <section class="card"><div class="card-head"><h2>{{ icon('settings') }}Consolă</h2></div>
+        <div class="card-body"><dl class="kv settings">
+          <dt>Temă</dt><dd><span class="no-js-only">Urmează sistemul</span>{{ theme_switch() }}<span class="hint">Preferința se păstrează doar în acest browser.</span></dd>
+          <dt>Sesiune</dt><dd>Expiră la 30 de minute după conectare</dd>
+          <dt>Transport</dt><dd><span class="pill ok">HTTPS</span></dd>
+          <dt>Cont și parolă</dt><dd><a href="/users">Gestionează contul web</a></dd>
+        </dl></div>
+      </section>
   {% endif %}
   {% if nas is defined %}{% include "nas.html" %}{% endif %}
-  {% if page == 'Dashboard' %}
-    <h2>Servicii</h2><div class="service-grid">
-      {% for service,status in (services or {}).items() %}<article><span>{{ service }}</span><strong class="status {{ status }}">{{ status }}</strong></article>{% endfor %}
-    </div>
-    {% if repositories %}<h2>Repository-uri existente</h2>{{ repository_table() }}{% endif %}
-  {% elif page == 'Repositories' %}
-    {% if repositories %}<h2>Repository-uri existente</h2>{{ repository_table() }}{% endif %}
+  {% if page == 'Settings' %}</div>{% endif %}
+  {% if page == 'Repositories' %}
+    {% if repositories %}<section class="section"><div class="section-head"><h2>Repository-uri existente</h2><p>Detectate în destinațiile SFTP vechi.</p></div>{{ repository_table() }}</section>{% endif %}
   {% elif page == 'Shares' %}
-    <div class="panel"><h2>windows-backup</h2><p>SMB 3 · TCP 445</p><p>Stare smbd <strong>{{ (services or {}).get('smbd', 'indisponibil') }}</strong></p><p>Conturile se gestionează din <a href="/users">Users</a>.</p></div>
-    <div class="panel"><h2>home</h2><p>Folder personal SMB. Aceeași cale deschide folderul contului cu care te autentifici.</p></div>
-    <h2>Share-uri SMB gestionate</h2>
-    <div class="form-grid">
-      {% for name, share in (shares or {}).items() %}
-        <details class="panel">
-          <summary><strong>{{ name }}</strong> · {{ (share.readers|length + share.writers|length)|string + ' conturi cu acces' if share.readers or share.writers else 'Fără utilizatori' }}</summary>
-          <form method="post" action="/shares">
-            {{ csrf() }}<input type="hidden" name="name" value="{{ name }}">
-            {{ smb_permissions(share.readers, share.writers) }}
-            <button name="action" value="smb_share_edit">Salvează accesul</button>
-            <button class="danger" name="action" value="smb_share_delete">Șterge share-ul și păstrează fișierele</button>
+    <section class="section">
+      <div class="section-head"><h2>Share-uri SMB existente</h2><p>Configurația anterioară modelului unificat.</p></div>
+      <div class="grid-cards">
+        <div class="panel stack-s"><div class="spread"><h3>windows-backup</h3>{{ service_pill((services or {}).get('smbd', 'indisponibil')) }}</div><p class="muted small">SMB 3 · TCP 445 · Stare smbd <strong>{{ (services or {}).get('smbd', 'indisponibil') }}</strong></p><p class="small">Conturile se gestionează din <a href="/users">Users</a>.</p></div>
+        <div class="panel stack-s"><h3>home</h3><p class="muted small">Folder personal SMB. Aceeași cale deschide folderul contului cu care te autentifici.</p></div>
+      </div>
+      {% if shares %}
+      <div class="stack-s">
+        {% for name, share in (shares or {}).items() %}
+          <details class="item">
+            <summary><span class="thumb share">{{ icon('shares', 'icon-s') }}</span><span class="title"><strong>{{ name }}</strong><small>{{ (share.readers|length + share.writers|length)|string + ' conturi cu acces' if share.readers or share.writers else 'Fără utilizatori' }}</small></span><span class="meta"><span class="tag on">SMB</span></span>{{ chev() }}</summary>
+            <div class="item-body">
+              <form method="post" action="/shares">
+                {{ csrf() }}<input type="hidden" name="name" value="{{ name }}">
+                {{ smb_permissions(share.readers, share.writers) }}
+                <div class="button-row">
+                  <button name="action" value="smb_share_edit">Salvează accesul</button>
+                  <button class="danger" name="action" value="smb_share_delete" data-confirm="Ștergi share-ul {{ name }}? Fișierele sunt păstrate.">Șterge share-ul și păstrează fișierele</button>
+                </div>
+              </form>
+            </div>
+          </details>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </section>
+  {% elif page == 'Users' %}
+    <section class="card" aria-labelledby="admins-title">
+      <div class="card-head"><h2 id="admins-title">{{ icon('shield') }}Administratori web</h2><span class="muted small">{{ admins|length }} conturi</span></div>
+      <div class="table-scroll"><table class="stack-table"><thead><tr><th>Cont</th><th>Stare</th><th>Administrare</th></tr></thead><tbody>
+      {% for admin in admins %}<tr><td data-label="Cont"><span class="row"><span class="avatar">{{ admin.name[:1] }}</span><span class="strong">{{ admin.name }}</span>{% if admin.name == g.user %}<span class="tag">Tu</span>{% endif %}</span></td><td data-label="Stare">{{ state_pill(admin.enabled) }}</td>
+        <td data-label="Administrare"><div class="cell-actions">{{ row_actions(admin.name, 'admin', enabled=admin.enabled) }}</div></td></tr>{% endfor %}
+      </tbody></table></div>
+      <div class="card-foot">
+        <details class="inline-details"><summary>{{ icon('plus', 'icon-s') }}Adaugă administrator web</summary>
+          <form method="post" action="/users" class="form-cols">
+            {{ csrf() }}<input type="hidden" name="role" value="admin">
+            <label>Nume<input name="name" pattern="[a-z][a-z0-9\-]{0,19}" maxlength="20" autocomplete="off" required><span class="hint">Litere mici, cifre și cratimă; începe cu o literă.</span></label>
+            <label>Parolă<input name="password" type="password" autocomplete="new-password" minlength="14" maxlength="128" required><span class="hint">Între 14 și 128 de caractere.</span></label>
+            <div class="full"><button name="action" value="create">Creează cont</button></div>
           </form>
         </details>
-      {% endfor %}
-    </div>
-  {% elif page == 'Users' %}
-    <h2>Administratori web</h2>
-    <div class="table-scroll"><table><thead><tr><th>Cont</th><th>Stare</th><th>Administrare</th></tr></thead><tbody>
-    {% for admin in admins %}<tr><td>{{ admin.name }}</td><td>{{ 'Activ' if admin.enabled else 'Dezactivat' }}</td>
-      <td>{{ row_actions(admin.name, 'admin', enabled=admin.enabled) }}</td></tr>{% endfor %}
-    </tbody></table></div>
-    <h2>Conturi SFTP și SMB gestionate</h2>
-    <div class="table-scroll"><table><thead><tr><th>Cont de conectare</th><th>Tip</th><th>Acces</th><th>Stare</th><th>Administrare</th></tr></thead><tbody>
-    {% for user in accounts|default([]) %}
-      <tr><td>{{ user.login }}</td><td>{{ user.role|upper }}</td><td>{{ (user.repositories|join(', ') if user.repositories else '/home (privat)') if user.role == 'sftp' else 'home (privat), windows-backup (comun)' }}</td>
-      <td>{{ 'Activ' if user.enabled else 'Dezactivat' }}{% if user.role == 'sftp' %}<br><span class="muted">{{ {'key':'Cheie SSH','password':'Parolă','either':'Cheie SSH sau parolă'}[user.auth|default('key')] }}</span>{% endif %}</td><td>{{ row_actions(user.name, user.role, user.repositories|default([]), user.enabled, user.auth|default('key'), user.login if user.role == 'smb' or user.home_provisioned else '') }}</td></tr>
-    {% else %}<tr><td colspan="5">Nu există încă utilizatori gestionați.</td></tr>{% endfor %}
-    </tbody></table></div>
-    <h2>Adaugă cont</h2>
-    <div class="form-grid">
-      <form method="post" action="/users" class="panel">
-        {{ csrf() }}<input type="hidden" name="role" value="admin"><h3>Administrator web</h3>
-        <label>Nume<input name="name" pattern="[a-z][a-z0-9\-]{0,19}" maxlength="20" autocomplete="off" required></label>
-        <label>Parolă<input name="password" type="password" autocomplete="new-password" minlength="14" maxlength="128" required></label>
-        <button name="action" value="create">Creează cont</button>
-      </form>
-    </div>
+      </div>
+    </section>
+    <section class="card" aria-labelledby="legacy-title">
+      <div class="card-head"><h2 id="legacy-title">{{ icon('key') }}Conturi SFTP și SMB gestionate</h2><span class="muted small">Model anterior</span></div>
+      <div class="table-scroll"><table class="stack-table"><thead><tr><th>Cont de conectare</th><th>Tip</th><th>Acces</th><th>Stare</th><th>Administrare</th></tr></thead><tbody>
+      {% for user in accounts|default([]) %}
+        <tr><td data-label="Cont"><span class="strong">{{ user.login }}</span></td><td data-label="Tip"><span class="tag on">{{ user.role|upper }}</span></td><td data-label="Acces">{{ (user.repositories|join(', ') if user.repositories else '/home (privat)') if user.role == 'sftp' else 'home (privat), windows-backup (comun)' }}</td>
+        <td data-label="Stare"><span class="stack-s">{{ state_pill(user.enabled) }}{% if user.role == 'sftp' %}<span class="muted small">{{ {'key':'Cheie SSH','password':'Parolă','either':'Cheie SSH sau parolă'}[user.auth|default('key')] }}</span>{% endif %}</span></td><td data-label="Administrare"><div class="cell-actions">{{ row_actions(user.name, user.role, user.repositories|default([]), user.enabled, user.auth|default('key'), user.login if user.role == 'smb' or user.home_provisioned else '') }}</div></td></tr>
+      {% else %}<tr><td colspan="5">Nu există încă utilizatori gestionați.</td></tr>{% endfor %}
+      </tbody></table></div>
+    </section>
   {% elif page == 'Activity' %}
-    <div class="table-scroll"><table><thead><tr><th>Moment (UTC)</th><th>Administrator</th><th>Acțiune</th><th>Cont</th><th>Rezultat</th></tr></thead><tbody>
-    {% for event in events %}<tr><td>{{ event.at }}</td><td>{{ event.actor }}</td><td>{{ event.event }}</td><td>{{ event.target }}</td><td>{{ event.result }}</td></tr>{% else %}<tr><td colspan="5">Jurnalul este gol.</td></tr>{% endfor %}
-    </tbody></table></div>
-  {% elif page == 'Settings' %}
-    <dl class="panel settings"><dt>Temă</dt><dd>Urmează sistemul</dd><dt>Sesiune</dt><dd>Expiră la 30 de minute după conectare</dd>
-    <dt>Transport</dt><dd>HTTPS</dd><dt>Cont și parolă</dt><dd><a href="/users">Gestionează contul web</a></dd></dl>
+    <section class="card">
+      <div class="table-tools" data-filter-for="audit-table" hidden>
+        <label>Caută<input type="search" placeholder="Administrator, acțiune, cont…" aria-controls="audit-table"></label>
+        <label class="narrow">Rezultat<select aria-controls="audit-table"><option value="">Toate</option><option value="ok">ok</option><option value="denied">denied</option></select></label>
+        <span class="muted small" data-filter-count aria-live="polite"></span>
+      </div>
+      <div class="table-scroll"><table class="stack-table" id="audit-table"><thead><tr><th>Moment (UTC)</th><th>Administrator</th><th>Acțiune</th><th>Cont</th><th>Rezultat</th></tr></thead><tbody>
+      {% for event in events %}<tr data-result="{{ event.result }}"><td data-label="Moment">{{ when(event.at) }}</td><td data-label="Administrator"><span class="strong">{{ event.actor }}</span></td><td data-label="Acțiune"><code>{{ event.event }}</code></td><td data-label="Cont">{{ event.target }}</td><td data-label="Rezultat"><span class="pill {{ 'ok' if event.result == 'ok' else 'danger' }}">{{ event.result }}</span></td></tr>{% else %}<tr><td colspan="5"><div class="empty">{{ icon('activity') }}<strong>Jurnalul este gol.</strong></div></td></tr>{% endfor %}
+      </tbody></table></div>
+    </section>
   {% endif %}
 </main>
+</div>
+<script src="{{ url_for('static', filename='console.js') }}" defer></script>
 {% endif %}
 </body></html>

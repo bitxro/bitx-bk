@@ -29,6 +29,7 @@ install -m 0644 app.py broker.py nas.py /opt/bitx-console/
 install -m 0644 templates/console.html /opt/bitx-console/templates/
 install -m 0644 templates/nas.html /opt/bitx-console/templates/
 install -m 0644 static/console.css /opt/bitx-console/static/
+install -m 0644 static/console.js static/theme.js /opt/bitx-console/static/
 install -d -m 0700 -o bitxweb -g bitxweb /var/lib/bitx-console
 install -d -m 0750 -o root -g bitxweb /etc/bitx-console
 install -d -m 0700 /etc/bitx-console/restic
