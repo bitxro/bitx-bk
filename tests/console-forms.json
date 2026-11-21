@@ -1,0 +1,72 @@
+{
+ "Dashboard:admin": [
+  "{\"action\": \"/logout\", \"buttons\": [], \"fields\": [\"csrf\"], \"method\": \"post\"}"
+ ],
+ "Storage:admin": [
+  "{\"action\": \"/logout\", \"buttons\": [], \"fields\": [\"csrf\"], \"method\": \"post\"}"
+ ],
+ "Repositories:admin": [
+  "{\"action\": \"/logout\", \"buttons\": [], \"fields\": [\"csrf\"], \"method\": \"post\"}",
+  "{\"action\": \"/nas\", \"buttons\": [\"action=nas_repository_check\", \"action=nas_repository_remove\", \"action=nas_repository_snapshots\"], \"fields\": [\"csrf\", \"name\"], \"method\": \"post\"}",
+  "{\"action\": \"/nas\", \"buttons\": [\"action=nas_repository_set\"], \"fields\": [\"client\", \"create\", \"csrf\", \"directory\", \"name\", \"share\"], \"method\": \"post\"}"
+ ],
+ "Users:admin": [
+  "{\"action\": \"/logout\", \"buttons\": [], \"fields\": [\"csrf\"], \"method\": \"post\"}",
+  "{\"action\": \"/nas\", \"buttons\": [\"action=nas_user_create\"], \"fields\": [\"auth\", \"csrf\", \"display\", \"enabled\", \"key\", \"name\", \"password\", \"password_confirm\", \"sftp\", \"smb\"], \"method\": \"post\"}",
+  "{\"action\": \"/nas\", \"buttons\": [\"action=nas_user_delete\"], \"fields\": [\"confirm_delete\", \"csrf\", \"delete_data\", \"name\"], \"method\": \"post\"}",
+  "{\"action\": \"/nas\", \"buttons\": [\"action=nas_user_edit\"], \"fields\": [\"auth\", \"csrf\", \"display\", \"enabled\", \"key\", \"name\", \"password\", \"password_confirm\", \"sftp\", \"smb\"], \"method\": \"post\"}",
+  "{\"action\": \"/users\", \"buttons\": [\"action=create\"], \"fields\": [\"csrf\", \"name\", \"password\", \"role\"], \"method\": \"post\"}",
+  "{\"action\": \"/users\", \"buttons\": [\"action=delete\", \"action=disable\"], \"fields\": [\"confirm_delete\", \"csrf\", \"delete_data\", \"name\", \"role\"], \"method\": \"post\"}",
+  "{\"action\": \"/users\", \"buttons\": [\"action=delete\"], \"fields\": [\"csrf\", \"name\", \"role\"], \"method\": \"post\"}",
+  "{\"action\": \"/users\", \"buttons\": [\"action=edit\"], \"fields\": [\"auth\", \"csrf\", \"key\", \"name\", \"password\", \"password_confirm\", \"repositories\", \"role\"], \"method\": \"post\"}",
+  "{\"action\": \"/users\", \"buttons\": [\"action=edit\"], \"fields\": [\"csrf\", \"name\", \"password\", \"role\"], \"method\": \"post\"}"
+ ],
+ "Shares:admin": [
+  "{\"action\": \"/logout\", \"buttons\": [], \"fields\": [\"csrf\"], \"method\": \"post\"}",
+  "{\"action\": \"/nas\", \"buttons\": [\"action=nas_builtin_edit\"], \"fields\": [\"csrf\", \"name\", \"perm_ana\", \"perm_bitxwindows\", \"perm_mihai\", \"perm_office\"], \"method\": \"post\"}",
+  "{\"action\": \"/nas\", \"buttons\": [\"action=nas_builtin_edit\"], \"fields\": [\"csrf\", \"name\", \"perm_ana\", \"perm_mihai\"], \"method\": \"post\"}",
+  "{\"action\": \"/nas\", \"buttons\": [\"action=nas_share_create\"], \"fields\": [\"csrf\", \"description\", \"enabled\", \"name\", \"sftp\", \"smb\"], \"method\": \"post\"}",
+  "{\"action\": \"/nas\", \"buttons\": [\"action=nas_share_delete\"], \"fields\": [\"csrf\", \"name\"], \"method\": \"post\"}",
+  "{\"action\": \"/nas\", \"buttons\": [\"action=nas_share_edit\"], \"fields\": [\"csrf\", \"description\", \"enabled\", \"name\", \"new_name\", \"perm_ana\", \"perm_bitxwindows\", \"perm_contabil\", \"perm_mihai\", \"perm_office\", \"sftp\", \"smb\"], \"method\": \"post\"}",
+  "{\"action\": \"/shares\", \"buttons\": [\"action=smb_share_delete\", \"action=smb_share_edit\"], \"fields\": [\"csrf\", \"name\", \"smb_bitxwindows\", \"smb_office\"], \"method\": \"post\"}"
+ ],
+ "Activity:admin": [
+  "{\"action\": \"/logout\", \"buttons\": [], \"fields\": [\"csrf\"], \"method\": \"post\"}"
+ ],
+ "Settings:admin": [
+  "{\"action\": \"/logout\", \"buttons\": [], \"fields\": [\"csrf\"], \"method\": \"post\"}"
+ ],
+ "File Manager:admin": [
+  "{\"action\": \"/file-manager/access\", \"buttons\": [\"action=disable\", \"action=enable\"], \"fields\": [\"confirmation\", \"csrf\", \"name\", \"password\"], \"method\": \"post\"}",
+  "{\"action\": \"/file-manager/access\", \"buttons\": [\"action=set_grants\"], \"fields\": [\"csrf\", \"name\", \"users\"], \"method\": \"post\"}",
+  "{\"action\": \"/logout\", \"buttons\": [], \"fields\": [\"csrf\"], \"method\": \"post\"}"
+ ],
+ "File Manager:files": [
+  "{\"action\": \"/logout\", \"buttons\": [], \"fields\": [\"csrf\"], \"method\": \"post\"}"
+ ],
+ "File Manager:files:ids": [
+  "file-manager",
+  "fm-actions",
+  "fm-back",
+  "fm-backups",
+  "fm-breadcrumb",
+  "fm-entries",
+  "fm-files",
+  "fm-filter",
+  "fm-forward",
+  "fm-jobs",
+  "fm-message",
+  "fm-next",
+  "fm-prev",
+  "fm-preview",
+  "fm-preview-content",
+  "fm-query",
+  "fm-roots",
+  "fm-sort",
+  "fm-upload",
+  "fm-view"
+ ],
+ "Login:None": [
+  "{\"action\": \"\", \"buttons\": [], \"fields\": [\"csrf\", \"name\", \"password\", \"role\"], \"method\": \"post\"}"
+ ]
+}
